@@ -25,6 +25,7 @@ enum PacketType : uint8_t {
   PKT_LOG   = 2,     // text
   PKT_RAW   = 3,     // raw Bayer image (debug)
   PKT_CMD   = 4,     // command, first payload byte = command code
+  PKT_FLOW  = 5,     // optical flow result + tracked points of one frame
 };
 
 constexpr uint32_t MAX_RX_PAYLOAD = 256;   // received packets are small (commands)
