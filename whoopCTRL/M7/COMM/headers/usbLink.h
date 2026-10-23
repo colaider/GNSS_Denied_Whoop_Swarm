@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "link.h"
+#include "../../../shared/communication/headers/link.h"
 
 namespace comm {
 
@@ -12,6 +12,8 @@ class UsbLink : public Link {
   size_t      write(const uint8_t* data, size_t len) override;
   int         read() override;
   const char* name() const override { return "usb"; }
+  void        lock() override;                                      // mutex: several threads may send
+  void        unlock() override;
 };
 
 }  // namespace comm

@@ -1,11 +1,3 @@
-// RANSAC - robust fit of a 2D similarity motion (shift + rotation + scale) to point pairs:
-//   q = [a -b; b a] * p + t,    scale = sqrt(a^2 + b^2),    angle = atan2(b, a)
-// Give the points relative to the optical centre (x - cx, y - cy), so rotation and scale
-// are about the lens axis and t is the motion at the axis.
-// Tries `iterations` random 2-point models, keeps the one with the most inliers, then
-// refits it with least squares on all its inliers.
-// No heap memory, nothing to free.
-
 #pragma once
 
 #include <stdint.h>

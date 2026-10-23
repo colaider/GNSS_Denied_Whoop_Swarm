@@ -17,6 +17,12 @@ class Link {
   virtual size_t      write(const uint8_t* data, size_t len) = 0;   // send bytes, returns bytes sent
   virtual int         read() = 0;                                   // next received byte, -1 if none (never waits)
   virtual const char* name() const = 0;                             // "usb", "wifi", ...
+
+  // Held around one whole packet by Communication::send(), so packets from two threads
+  // never mix. Default: nothing (single thread). Links used by several threads override
+  // them with a mutex.
+  virtual void lock() {}
+  virtual void unlock() {}
 };
 
 }  // namespace comm

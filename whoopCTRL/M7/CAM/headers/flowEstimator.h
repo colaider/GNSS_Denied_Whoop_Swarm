@@ -13,9 +13,9 @@ namespace vision {
 struct FlowConfig {
   int   pyramidLevels = 4;       // 4 levels: up to ~15 px of motion per frame
   int   window        = 9;       // LK window, pixels (odd)
-  float quality       = 0.01f;   // GFTT: keep corners >= quality * best corner
+  float quality       = 0.005f;   // GFTT: keep corners >= quality * best corner
   float minDistance   = 8.0f;    // GFTT: spacing between points, pixels
-  int   maxPoints     = 24;      // budget: points alive in the whole image
+  int   maxPoints     = 100;      // budget: points alive in the whole image
   int   ransacIters   = 20;      // RANSAC random tries
   float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier
   int   minInliers    = 6;       // fewer -> the result is not valid

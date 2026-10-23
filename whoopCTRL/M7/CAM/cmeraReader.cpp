@@ -2,6 +2,8 @@
 
 #include <stdlib.h>
 
+#include "../../shared/headers/sharedClock.h"
+
 namespace vision {
 
 CameraReader::CameraReader(const CameraConfig& cfg) : cfg_(cfg) {}
@@ -79,9 +81,9 @@ void CameraReader::regWrite(uint8_t reg, uint8_t val) {
 }
 
 bool CameraReader::grab() {
-  uint32_t t0 = micros();
+  uint32_t t0 = shared::nowUs();
   int err = cam_.grabFrame(fb_, 500);          // snapshot: waits for the next full frame
-  tEndUs_ = micros();                          // TODO: shared hardware clock once it exists
+  tEndUs_ = shared::nowUs();                   // shared clock: the M4 can compare it directly
   stats_.lastGrabUs = tEndUs_ - t0;
   if (err != 0) { stats_.grabErrors++; return false; }
   return true;

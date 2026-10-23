@@ -2,10 +2,22 @@
 
 #include <string.h>
 
+#include "../headers/messages.h"
+
 namespace comm {
 
 static const uint8_t MAGIC0 = 0xA5;
 static const uint8_t MAGIC1 = 0x5A;
+
+// links registered by the sketch, looked up by name in Communication::begin()
+static Link* links[MAX_LINKS];
+static int   nLinks = 0;
+
+bool addLink(Link& link) {
+  if (nLinks >= MAX_LINKS) return false;
+  links[nLinks++] = &link;
+  return true;
+}
 
 // CRC-16/CCITT-FALSE (poly 0x1021, start 0xFFFF) - same as binascii.crc_hqx(data, 0xFFFF) in Python
 static uint16_t crc16(const uint8_t* d, uint32_t n, uint16_t crc) {
@@ -18,9 +30,9 @@ static uint16_t crc16(const uint8_t* d, uint32_t n, uint16_t crc) {
 
 bool Communication::begin(const char* linkName) {
   link_ = nullptr;
-  if (strcmp(linkName, "usb") == 0) link_ = &usb_;
-  // "wifi" -> WifiLink, "core" -> CoreLink: add here when they exist
-  if (!link_) return false;
+  for (int i = 0; i < nLinks && !link_; i++)
+    if (strcmp(links[i]->name(), linkName) == 0) link_ = links[i];
+  if (!link_) return false;                        // not registered with addLink()
   return link_->begin();
 }
 
@@ -38,15 +50,17 @@ bool Communication::send(uint8_t type, const void* a, uint32_t na, const void* b
   if (nb) crc = crc16((const uint8_t*)b, nb, crc);
   const uint8_t tail[2] = {(uint8_t)crc, (uint8_t)(crc >> 8)};
 
+  link_->lock();                                   // one whole packet, never mixed with another
   size_t sent = link_->write(head, sizeof(head));
   if (na) sent += link_->write((const uint8_t*)a, na);
   if (nb) sent += link_->write((const uint8_t*)b, nb);
   sent += link_->write(tail, sizeof(tail));
+  link_->unlock();
   return sent == sizeof(head) + len + sizeof(tail);
 }
 
 bool Communication::log(const char* text) {
-  return send(PKT_LOG, text, strlen(text));
+  return send(msg::PKT_LOG, text, strlen(text));
 }
 
 bool Communication::receive(Packet& out) {

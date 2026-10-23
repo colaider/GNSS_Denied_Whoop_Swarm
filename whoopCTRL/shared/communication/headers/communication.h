@@ -1,10 +1,15 @@
-// Communication - packets over a link chosen by name.
+// Communication - packets over a link chosen by name. Used by both cores.
 //
+//   comm::UsbLink usb;                         // each sketch creates the links it has
+//   comm::addLink(usb);                        // ...and registers them once
 //   comm::Communication comms;
-//   comms.begin("usb");                        // "usb" now; "wifi", "core" when those links exist
-//   comms.send(comm::PKT_LOG, "hello", 5);
+//   comms.begin("usb");                        // pick a registered link by its name()
+//   comms.send(msg::PKT_LOG, "hello", 5);
 //   comm::Packet p;
 //   while (comms.receive(p)) { ... }           // never waits
+//
+// One Communication per link (it keeps that link's receive state). Packet types and
+// layouts are in shared/headers/messages.h.
 //
 // Packet on the wire (little-endian):
 //   0xA5 0x5A | type u8 | len u32 | payload[len] | crc16 u16
@@ -16,19 +21,14 @@
 #include <stdint.h>
 
 #include "link.h"
-#include "usbLink.h"
 
 namespace comm {
 
-enum PacketType : uint8_t {
-  PKT_FRAME = 1,     // camera frame (header + pixels)
-  PKT_LOG   = 2,     // text
-  PKT_RAW   = 3,     // raw Bayer image (debug)
-  PKT_CMD   = 4,     // command, first payload byte = command code
-  PKT_FLOW  = 5,     // optical flow result + tracked points of one frame
-};
+constexpr int      MAX_LINKS      = 4;     // links one sketch can register
+constexpr uint32_t MAX_RX_PAYLOAD = 256;   // received packets are small (commands, results)
 
-constexpr uint32_t MAX_RX_PAYLOAD = 256;   // received packets are small (commands)
+// Makes a link available to Communication::begin() under its name(). False if full.
+bool addLink(Link& link);
 
 struct Packet {
   uint8_t  type = 0;
@@ -38,7 +38,7 @@ struct Packet {
 
 class Communication {
  public:
-  // Picks the link by name and opens it. False if the name is unknown or it fails to open.
+  // Picks the registered link with this name and opens it. False if unknown or it fails.
   bool begin(const char* linkName);
 
   // One packet. The two-part form sends a + b as one payload without copying
@@ -57,8 +57,7 @@ class Communication {
  private:
   enum RxState : uint8_t { RX_MAGIC1, RX_MAGIC2, RX_HEADER, RX_PAYLOAD, RX_CRC };
 
-  Link*   link_ = nullptr;
-  UsbLink usb_;                                   // add WifiLink / CoreLink members here later
+  Link* link_ = nullptr;
 
   // receive state machine
   RxState  rxState_ = RX_MAGIC1;
