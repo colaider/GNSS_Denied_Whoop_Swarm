@@ -51,10 +51,13 @@ static_assert(ccv::Replenish::MAX_POINTS <= msg::FLOW_MAX_POINTS, "more points t
 bool     m4ok         = false;
 bool     rawRequested = false;
 uint32_t routedToM4 = 0, routedToPc = 0, frames = 0, flowUsSum = 0;
+// where a frame's time goes (sums over the stats period, microseconds)
+uint32_t grabSum = 0, pyramidSum = 0, trackSum = 0, ransacSum = 0, replenishSum = 0, sendSum = 0, searchSum = 0;
 
-void logLine(const char* fmt, unsigned long a = 0, unsigned long b = 0, unsigned long c = 0, unsigned long d = 0) {
-  char line[128];
-  snprintf(line, sizeof(line), fmt, a, b, c, d);
+void logLine(const char* fmt, unsigned long a = 0, unsigned long b = 0, unsigned long c = 0, unsigned long d = 0,
+             unsigned long e = 0, unsigned long g = 0) {
+  char line[160];
+  snprintf(line, sizeof(line), fmt, a, b, c, d, e, g);
   pc.log(line);
 }
 
@@ -107,7 +110,14 @@ void sendStats() {
   const uint32_t fps10 = frames * 10000000UL / (now - last);      // frames per second x10
   logLine("M7: %lu.%lu fps, flow %lu us avg, routed to M4 %lu", fps10 / 10, fps10 % 10, frames ? flowUsSum / frames : 0, routedToM4);
   logLine("M7: routed from M4 %lu, core rx errors %lu, core overflow bytes %lu", routedToPc, m4.rxErrors(), core.rxOverflows());
+  if (frames) {
+    logLine("M7 per frame, avg us: grab wait %lu | pyramid %lu, track %lu, ransac %lu, replenish %lu | send %lu",
+            grabSum / frames, pyramidSum / frames, trackSum / frames, ransacSum / frames, replenishSum / frames,
+            sendSum / frames);
+    logLine("M7: corner searches %lu.%02lu sectors per frame", searchSum / frames, searchSum * 100 / frames % 100);
+  }
   frames = flowUsSum = 0;
+  grabSum = pyramidSum = trackSum = ransacSum = replenishSum = sendSum = searchSum = 0;
   last = now;
 }
 
@@ -146,7 +156,15 @@ void loop() {
   const uint32_t flowUs = shared::nowUs() - t0;
   frames++;
   flowUsSum += flowUs;
+  const vision::FlowTiming& ft = flow.getTiming();
+  grabSum += camera.stats().lastGrabUs;
+  pyramidSum += ft.pyramidUs;
+  trackSum += ft.trackUs;
+  ransacSum += ft.ransacUs;
+  replenishSum += ft.replenishUs;
+  searchSum += ft.searches;
 
+  const uint32_t t1 = shared::nowUs();
   sendFlow(flowUs);                            // M4 first: it is the one that flies
   if (FRAME_EVERY && f.seq % FRAME_EVERY == 0) sendFrame(f);
   if (rawRequested) {                          // debug: the untouched Bayer image of this frame
@@ -154,6 +172,7 @@ void loop() {
     msg::RawHeader r = {f.seq, camera.rawWidth(), camera.rawHeight()};
     pc.send(msg::PKT_RAW, &r, sizeof(r), camera.rawData(), (uint32_t)r.width * r.height);
   }
+  sendSum += shared::nowUs() - t1;
 
   routeFromM4();                               // again: the grab waited a whole frame
   sendStats();

@@ -1,13 +1,15 @@
 #include "headers/flowEstimator.h"
 
+#include "../../shared/headers/sharedClock.h"
+
 namespace vision {
 
 FlowEstimator::FlowEstimator(const FlowConfig& cfg)
     : cfg_(cfg),
       gftt_(cfg.maxPoints, cfg.quality, cfg.minDistance),
-      lk_(cfg.pyramidLevels, cfg.window),
+      lk_(cfg.pyramidLevels, cfg.window, cfg.lkIterations),
       ransac_(cfg.ransacIters, cfg.inlierPx, cfg.minInliers),
-      rep_(gftt_, cfg.maxPoints) {}
+      rep_(gftt_, cfg.maxPoints, 2, 2, 2, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
 
 void FlowEstimator::begin(const calib::CameraIntrinsics& k) {
   cx_ = k.cx;
@@ -34,14 +36,20 @@ bool FlowEstimator::update(const ccv::Image& img, uint32_t seq, uint32_t tUs) {
   result_.fy   = fy_;
   result_.cx   = cx_;
   result_.cy   = cy_;
+  timing_ = FlowTiming();
+  uint32_t t = shared::nowUs();
   if (!lk_.newFrame(img)) return false;            // image too large for the tracker
+  timing_.pyramidUs = shared::nowUs() - t;
 
   const int n = rep_.count();
   if (havePrev_ && n > 0) {
     const ccv::Point2f* prev = rep_.points();
 
     // 1) track every kept point into this frame (forward-backward check inside)
+    t = shared::nowUs();
     lk_.track(prev, cur_, status_, n);
+    timing_.trackUs = shared::nowUs() - t;
+    t = shared::nowUs();
 
     // 2) RANSAC on the tracked ones, relative to the optical centre
     int m = 0;
@@ -78,13 +86,20 @@ bool FlowEstimator::update(const ccv::Image& img, uint32_t seq, uint32_t tUs) {
       o.inlier = inlier_[i];
     }
 
+    timing_.ransacUs = shared::nowUs() - t;
+
     // 4) keep the survivors. Strikes only when RANSAC found a motion: with too few
     //    points nobody can be called an outlier.
+    t = shared::nowUs();
     rep_.update(cur_, status_, ok ? inlier_ : nullptr);
+    timing_.replenishUs = shared::nowUs() - t;
   }
 
-  // 5) top up the sectors for the next frame
+  // 5) top up the sectors that ran short, for the next frame
+  t = shared::nowUs();
   rep_.replenish(img);
+  timing_.replenishUs += shared::nowUs() - t;
+  timing_.searches = (uint8_t)rep_.searches();
   havePrev_ = true;
   prevUs_   = tUs;
   return result_.valid;

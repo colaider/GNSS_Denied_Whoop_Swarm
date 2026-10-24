@@ -15,10 +15,22 @@ struct FlowConfig {
   int   window        = 9;       // LK window, pixels (odd)
   float quality       = 0.005f;   // GFTT: keep corners >= quality * best corner
   float minDistance   = 8.0f;    // GFTT: spacing between points, pixels
-  int   maxPoints     = 100;      // budget: points alive in the whole image
+  int   maxPoints     = 32;      // budget: points alive in the whole image (tracking cost grows with it;
+                                 // was 100, which Replenish caps at 64: ~12 fps while moving)
+  int   lkIterations  = 5;       // LK iterations per pyramid level at most (was 10)
   int   ransacIters   = 20;      // RANSAC random tries
   float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier
   int   minInliers    = 6;       // fewer -> the result is not valid
+  float refillBelow   = 0.5f;    // search a sector for new points when below this share of its quota
+  int   searchesPerFrame = 1;    // most sectors searched per frame (the search is the slow part)
+};
+
+struct FlowTiming {              // where the last update() spent its time, microseconds
+  uint32_t pyramidUs   = 0;      // building the image pyramid (lk.newFrame)
+  uint32_t trackUs     = 0;      // tracking the points (LK, forward + backward)
+  uint32_t ransacUs    = 0;      // RANSAC + filling the results
+  uint32_t replenishUs = 0;      // dropping lost points + searching new ones (GFTT)
+  uint8_t  searches    = 0;      // sectors searched this frame
 };
 
 struct FlowResult {              // motion between the previous frame (t0) and this one (t1)
@@ -55,6 +67,7 @@ class FlowEstimator {
   bool update(const ccv::Image& img, uint32_t seq, uint32_t tUs);
 
   const FlowResult& getResult() const { return result_; }
+  const FlowTiming& getTiming() const { return timing_; }
   const PointFlow*  getPoints(int& count) const {   // points tracked in the last update()
     count = nOut_;
     return out_;
@@ -75,6 +88,7 @@ class FlowEstimator {
   bool       havePrev_ = false;
   uint32_t   prevUs_   = 0;
   FlowResult result_;
+  FlowTiming timing_;
   PointFlow  out_[MAXP];
   int        nOut_ = 0;
 

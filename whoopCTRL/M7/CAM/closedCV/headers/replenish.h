@@ -8,6 +8,12 @@
 // that are below their share, at least GFTT's minDistance from every existing point.
 // If the budget is full, the youngest points of over-full sectors make room for them.
 //
+// The search (GFTT) costs the same for one point as for many: it scores every pixel of the
+// sector. So a sector is searched only once it has clearly run short (below refillBelow of
+// its share; then it is filled back up), and at most searchesPerCall sectors per call, the
+// emptiest first. A moving camera loses a point or two everywhere every frame; without this
+// it would search the whole image every frame.
+//
 // Every frame:
 //   lk.newFrame(img);
 //   lk.track(rep.points(), cur, status, rep.count());
@@ -36,15 +42,20 @@ class Replenish {
   // sectorsX/Y:    sector grid (2 x 2 = 4 sectors), each at most 4
   // maxStrikes:    a point that is a RANSAC outlier this many frames in a row is dropped
   // mergeDistance: if two points come closer than this (pixels), the younger one is dropped
+  // refillBelow:   a sector is searched when it has fewer than this fraction of its share
+  //                (1 = whenever one point is missing)
+  // searchesPerCall: most sectors searched by one replenish() call (the emptiest first)
   Replenish(GFTT& gftt, int maxPoints, int sectorsX = 2, int sectorsY = 2, int maxStrikes = 2,
-            float mergeDistance = 3.0f);
+            float mergeDistance = 3.0f, float refillBelow = 0.5f, int searchesPerCall = 1);
 
   // After tracking: newPts / status / inlier have count() entries, in the order of points().
   // status 0 -> point lost, removed. inlier (optional) 0 -> one strike.
   void update(const Point2f* newPts, const uint8_t* status, const uint8_t* inlier = nullptr);
 
-  // Adds new points from `img` into sectors below their share. Returns how many were added.
+  // Adds new points from `img` into the sectors that ran short (see above). Returns how
+  // many were added.
   int replenish(const Image& img);
+  int searches() const { return searches_; }       // sectors searched by the last replenish()
 
   int            count()     const { return n_; }
   const Point2f* points()    const { return pts_; }   // positions, for PyramidLK::track
@@ -61,6 +72,9 @@ class Replenish {
   GFTT& gftt_;
   int   maxPoints_, sx_, sy_, maxStrikes_;
   float merge2_;                    // mergeDistance squared
+  float refillBelow_;
+  int   searchesPerCall_;
+  int   searches_ = 0;
 
   Point2f  pts_[MAX_POINTS];
   uint16_t ids_[MAX_POINTS];

@@ -3,13 +3,15 @@
 namespace ccv {
 
 Replenish::Replenish(GFTT& gftt, int maxPoints, int sectorsX, int sectorsY, int maxStrikes,
-                     float mergeDistance)
+                     float mergeDistance, float refillBelow, int searchesPerCall)
     : gftt_(gftt),
       maxPoints_(maxPoints < 1 ? 1 : (maxPoints > MAX_POINTS ? MAX_POINTS : maxPoints)),
       sx_(sectorsX < 1 ? 1 : (sectorsX > 4 ? 4 : sectorsX)),
       sy_(sectorsY < 1 ? 1 : (sectorsY > 4 ? 4 : sectorsY)),
       maxStrikes_(maxStrikes < 1 ? 1 : maxStrikes),
-      merge2_(mergeDistance * mergeDistance) {}
+      merge2_(mergeDistance * mergeDistance),
+      refillBelow_(refillBelow < 0.0f ? 0.0f : (refillBelow > 1.0f ? 1.0f : refillBelow)),
+      searchesPerCall_(searchesPerCall < 1 ? 1 : searchesPerCall) {}
 
 void Replenish::update(const Point2f* newPts, const uint8_t* status, const uint8_t* inlier) {
   // 1) move survivors, drop lost points and repeated outliers. Walk backwards so removing
@@ -52,8 +54,25 @@ int Replenish::replenish(const Image& img) {
   int have[MAX_SECTORS] = {0};                     // points per sector
   for (int i = 0; i < n_; i++) have[sectorOf(pts_[i], img)]++;
 
+  // the sectors that clearly ran short, emptiest (against its share) first. A sector that
+  // is empty always counts, so a fresh start fills one sector per call.
+  int order[MAX_SECTORS], nShort = 0;
+  for (int s = 0; s < sectors; s++)
+    if (quota(s) > 0 && (have[s] == 0 || have[s] < quota(s) * refillBelow_)) order[nShort++] = s;
+  for (int a = 1; a < nShort; a++) {               // insertion sort by have / quota
+    const int s = order[a];
+    int b = a - 1;
+    while (b >= 0 && have[order[b]] * quota(s) > have[s] * quota(order[b])) {
+      order[b + 1] = order[b];
+      b--;
+    }
+    order[b + 1] = s;
+  }
+  searches_ = nShort < searchesPerCall_ ? nShort : searchesPerCall_;
+
   int added = 0;
-  for (int s = 0; s < sectors; s++) {
+  for (int k0 = 0; k0 < searches_; k0++) {
+    const int s = order[k0];
     const int need = quota(s) - have[s];
     if (need <= 0) continue;
 
