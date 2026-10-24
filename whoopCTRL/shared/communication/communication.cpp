@@ -6,6 +6,8 @@
 
 namespace comm {
 
+static_assert(msg::FLOW_MAX_BYTES <= MAX_RX_PAYLOAD, "a flow packet with all its points must fit a received Packet");
+
 static const uint8_t MAGIC0 = 0xA5;
 static const uint8_t MAGIC1 = 0x5A;
 

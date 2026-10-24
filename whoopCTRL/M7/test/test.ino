@@ -37,7 +37,7 @@ void sendFlow(uint32_t flowUs) {
     pointMsgs[i] = {pts[i].id, pts[i].age, pts[i].x, pts[i].y, pts[i].dx, pts[i].dy, pts[i].inlier};
 
   msg::FlowHeader h = {r.seq, r.t0Us, r.t1Us, flowUs, r.tx, r.ty, r.angle, r.scale, r.rmsPx,
-                       r.fx, r.fy, r.nTracked, r.nInliers, (uint16_t)n, (uint8_t)r.valid};
+                       r.fx, r.fy, r.cx, r.cy, r.nTracked, r.nInliers, (uint16_t)n, (uint8_t)r.valid};
   comms.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, (uint32_t)n * sizeof(msg::PointMsg));
 }
 

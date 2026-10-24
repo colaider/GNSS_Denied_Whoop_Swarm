@@ -33,6 +33,7 @@ struct FlowResult {              // motion between the previous frame (t0) and t
   uint16_t nInliers = 0;         // points that agree with the motion
   float    rmsPx    = 0.0f;      // error of the inliers, pixels
   float    fx = 0.0f, fy = 0.0f; // focal lengths of this image, pixels (pixels -> angle)
+  float    cx = 0.0f, cy = 0.0f; // optical centre of this image, pixels
 };
 
 struct PointFlow {               // one tracked point of the last update()

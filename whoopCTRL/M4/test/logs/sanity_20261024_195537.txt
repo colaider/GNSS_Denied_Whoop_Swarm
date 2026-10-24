@@ -1,0 +1,6 @@
+# per frame: seq | dt = frame pair time, Z = ToF range, dZ = range change over the pair
+#   flow = frame motion at the centre (M7, RANSAC), px | inl = inliers / points
+#   rot = gyro rotation over the pair, camera axes, deg | rotflow = what that rotation
+#   moves the centre by, px (-fx*rot_y, fy*rot_x) | trans = flow - rotflow, px
+#   v(tx) = -trans/f * Z/dt (check, from the centre only) | v cam = estimateVelocity,
+#   camera axes | v world | pos = camera position, h = height | rpy = attitude, deg | acc, g

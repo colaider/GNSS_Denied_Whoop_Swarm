@@ -4,9 +4,11 @@
 // - begin() on the M7 also STARTS the M4 and waits up to 5 s for it to answer
 //   (false if the M4 has no program). On the M4 it connects to the M7.
 // - Sending: the bytes of one packet are collected while Communication holds the lock
-//   and sent at unlock(), so a packet is usually one RPC message (split above CHUNK).
-// - Receiving: every RPC message is copied into a 2 KB buffer as it arrives; read() takes
-//   bytes from there and never waits.
+//   and sent at unlock(), so a packet is one RPC message, or several above CHUNK bytes.
+//   A packet always starts a new message.
+// - Receiving: every RPC message is copied into a 4 KB buffer as it arrives; read() takes
+//   bytes from there and never waits. When the buffer is full, WHOLE packets are dropped
+//   (never one chunk of a split packet), so the next packet still arrives cleanly.
 // - Do not use RPC.print()/RPC.write() elsewhere: that would mix text into the packets.
 //
 // One CoreLink per core (the RPC library has one raw channel). No heap, nothing to free.
@@ -20,7 +22,7 @@ namespace comm {
 class CoreLink : public Link {
  public:
   static constexpr size_t CHUNK   = 256;    // largest RPC message we send (the limit is ~496)
-  static constexpr size_t RX_SIZE = 2048;   // receive buffer, bytes
+  static constexpr size_t RX_SIZE = 4096;   // receive buffer, bytes (~2 full flow packets + commands)
 
   bool        begin() override;
   size_t      write(const uint8_t* data, size_t len) override;

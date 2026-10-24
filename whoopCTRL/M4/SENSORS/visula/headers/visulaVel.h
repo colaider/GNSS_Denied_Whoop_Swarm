@@ -15,7 +15,9 @@ class visualVel {
 
   void getOpticalFlow(const msg::FlowHeader& flow);
 
-  visualVelocityVector estimateVelocity(uint32_t tUs, const sensors::Attitude& att, const sensors::ToFReading& tof, const msg::FlowHeader& flow);
+  // rot: camera rotation from flow.t0Us to flow.t1Us (gyro), radians, camera axes: x right, y down, z along the view
+  // dZ: change of the distance to the floor over the same time (ToF), m; < 0 = getting closer
+  visualVelocityVector estimateVelocity(uint32_t tUs, const sensors::Attitude& att, const sensors::Vec3& rot, const sensors::ToFReading& tof, float dZ, const msg::FlowHeader& flow, const msg::PointMsg* pts, int n);
 
   vw linReg(const float* x, const float* y, int n);
 };

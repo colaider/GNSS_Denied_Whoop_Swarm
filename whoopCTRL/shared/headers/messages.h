@@ -15,7 +15,7 @@ enum PacketType : uint8_t {
   PKT_LOG   = 2,     // text
   PKT_RAW   = 3,     // raw Bayer image: RawHeader + bytes (debug)
   PKT_CMD   = 4,     // command, first payload byte = command code
-  PKT_FLOW  = 5,     // optical flow: FlowHeader + count * PointMsg (count = 0 to the M4)
+  PKT_FLOW  = 5,     // optical flow: FlowHeader + count * PointMsg
 
   // trajectory (PC -> M7 -> M4, the M7 only forwards; replies come back the same way)
   PKT_SEG          = 6,    // SegHeader + n * TrajPoint: one piece of the trajectory
@@ -25,6 +25,8 @@ enum PacketType : uint8_t {
   PKT_TRAJ_REPLACE = 10,   // TrajReplace: drop queued (not yet flown) segments from here on
   PKT_FLIGHT_CMD   = 11,   // FlightCommand: hold / land / abort / kill, skips the queue
   PKT_TELEM        = 12,   // Telemetry: M4 state at 10-20 Hz
+
+  PKT_SENSORS      = 13,   // SensorState: what the M4's sensors measured (M4 -> PC, testing)
 };
 
 // Packet types the M7 passes from the PC to the M4 unchanged.
@@ -35,7 +37,8 @@ inline bool forM4(uint8_t type) {
 
 // Packet types the M7 passes from the M4 to the PC unchanged.
 inline bool fromM4(uint8_t type) {
-  return type == PKT_SEG_ACK || type == PKT_SEG_NACK || type == PKT_TELEM || type == PKT_LOG;
+  return type == PKT_SEG_ACK || type == PKT_SEG_NACK || type == PKT_TELEM || type == PKT_LOG ||
+         type == PKT_SENSORS;
 }
 
 struct __attribute__((packed)) FrameHeader {     // PKT_FRAME payload: this + pixels
@@ -53,11 +56,11 @@ static_assert(sizeof(RawHeader) == 8, "Python '<I2H'");
 
 struct __attribute__((packed)) FlowHeader {      // PKT_FLOW payload: this + count * PointMsg
   uint32_t seq, t0Us, t1Us, flowUs;              // t0/t1: shared clock; flowUs: compute time
-  float    tx, ty, angle, scale, rmsPx, fx, fy;  // frame motion (pixels, radians)
+  float    tx, ty, angle, scale, rmsPx, fx, fy, cx, cy;  // frame motion (pixels, radians), camera
   uint16_t nTracked, nInliers, count;            // count = PointMsg entries that follow
   uint8_t  valid;
 };
-static_assert(sizeof(FlowHeader) == 51, "Python '<4I7f3HB'");
+static_assert(sizeof(FlowHeader) == 59, "Python '<4I9f3HB'");
 
 struct __attribute__((packed)) PointMsg {        // one tracked point
   uint16_t id, age;
@@ -65,6 +68,11 @@ struct __attribute__((packed)) PointMsg {        // one tracked point
   uint8_t  inlier;
 };
 static_assert(sizeof(PointMsg) == 21, "Python '<2H4fB'");
+
+// The most points one flow packet carries, and its size: 59 + 64 * 21 = 1403 bytes.
+// Every receiver must accept a packet this big (comm::MAX_RX_PAYLOAD).
+constexpr int      FLOW_MAX_POINTS = 64;
+constexpr uint32_t FLOW_MAX_BYTES  = sizeof(FlowHeader) + FLOW_MAX_POINTS * sizeof(PointMsg);
 
 // ---------------------------------------------------------------- trajectory
 // A trajectory is uploaded as a queue of segments while it is being flown: the PC keeps
@@ -160,5 +168,25 @@ struct __attribute__((packed)) Telemetry {       // PKT_TELEM payload, M4 -> PC 
   float    ex, ey, ez;                           // tracking error = desired - estimated, m
 };
 static_assert(sizeof(Telemetry) == 54, "Python '<IB2HBI10f'");
+
+// ---------------------------------------------------------------- sensor test
+enum SensorFlags : uint8_t { SENS_CAM_VALID = 1, SENS_IMU_READY = 2, SENS_TOF_VALID = 4 };
+
+struct __attribute__((packed)) SensorState {     // PKT_SENSORS payload, with every camera update
+  uint32_t tUs;                                  // shared clock, when it was sent
+  uint32_t camUs;                                // when the camera velocity was measured
+  uint32_t flowSeq;                              // the camera frame it came from
+  uint8_t  flags;                                // SensorFlags
+  float    camX, camY, camZ, camVx, camVy;       // camera: position (z = ToF height) + velocity, world
+  float    imuX, imuY, imuVx, imuVy;             // IMU alone: position + velocity, world
+  float    roll, pitch, yaw;                     // attitude, rad
+  float    rangeM;                               // last ToF range (along the beam), m
+  float    accX, accY, accZ;                     // accelerometer, body axes, g (gravity included)
+  // the camera velocity's steps (Sensors::cameraDebug), for the sanity check
+  float    rotX, rotY, rotZ;                     // gyro rotation over the frame pair, camera axes, rad
+  float    dZ;                                   // distance change over the frame pair, m
+  float    camVxC, camVyC;                       // velocity in camera axes, m/s
+};
+static_assert(sizeof(SensorState) == 101, "Python '<3IB22f'");
 
 }  // namespace msg

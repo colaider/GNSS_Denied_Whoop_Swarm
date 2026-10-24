@@ -4,8 +4,8 @@
 //   1. PC -> M4 : trajectory / flight-command packets are passed on unchanged (msg::forM4)
 //   2. M4 -> PC : ACKs, telemetry, logs are passed on unchanged (msg::fromM4)
 //   3. camera frame -> FlowEstimator
-//   4. flow result to the M4 (PKT_FLOW without points, 51 bytes)
-//   5. to the PC: flow with all points every frame, the image every FRAME_EVERY frames
+//   4. flow to the M4 with all points (RANSAC only marks inliers, the M4 decides what to use)
+//   5. to the PC: the same flow packet (points if SEND_POINTS), the image every FRAME_EVERY frames
 //
 // Upload: Tools > Board: Arduino Nicla Vision, Target core: Main Core,
 //         Flash split: "1MB M7 + 1MB M4" (the same split as the M4 sketch, or the M4 won't start).
@@ -33,7 +33,8 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/replenish.cpp"
 
 // ---- debug stream to the PC ----
-const uint32_t FRAME_EVERY  = 1;       // send the image every N frames (0 = never)
+const uint32_t FRAME_EVERY  = 3;       // send the image every N frames (0 = never). 10 KB over USB per
+                                       // image: every frame made the loop miss the next one (21 -> 10 fps)
 const bool     SEND_POINTS  = true;    // flow to the PC with its tracked points
 const uint32_t STATS_EVERY_MS = 5000;  // a status line to the PC
 
@@ -45,6 +46,7 @@ comm::Communication   m4;              // the M4 core
 vision::CameraReader  camera;
 vision::FlowEstimator flow;
 msg::PointMsg         pointMsgs[ccv::Replenish::MAX_POINTS];
+static_assert(ccv::Replenish::MAX_POINTS <= msg::FLOW_MAX_POINTS, "more points than a flow packet may carry");
 
 bool     m4ok         = false;
 bool     rawRequested = false;
@@ -78,18 +80,17 @@ void routeFromM4() {
 // ---- flow output ----
 void sendFlow(uint32_t flowUs) {
   const vision::FlowResult& r = flow.getResult();
-  msg::FlowHeader h = {r.seq, r.t0Us, r.t1Us, flowUs, r.tx, r.ty, r.angle, r.scale, r.rmsPx, r.fx, r.fy, r.nTracked, r.nInliers, 0, (uint8_t)r.valid};
-
-  if (m4ok) m4.send(msg::PKT_FLOW, &h, sizeof(h));   // the M4 gets the result only
-
   int n = 0;
-  if (SEND_POINTS) {
-    const vision::PointFlow* pts = flow.getPoints(n);
-    for (int i = 0; i < n; i++) pointMsgs[i] = {pts[i].id, pts[i].age, pts[i].x, pts[i].y, pts[i].dx, pts[i].dy, pts[i].inlier};
-  }
+  const vision::PointFlow* pts = flow.getPoints(n);
+  for (int i = 0; i < n; i++) pointMsgs[i] = {pts[i].id, pts[i].age, pts[i].x, pts[i].y, pts[i].dx, pts[i].dy, pts[i].inlier};
 
-  h.count = (uint16_t)n;
-  pc.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, (uint32_t)n * sizeof(msg::PointMsg));
+  msg::FlowHeader h = {r.seq, r.t0Us, r.t1Us, flowUs, r.tx, r.ty, r.angle, r.scale, r.rmsPx, r.fx, r.fy, r.cx, r.cy, r.nTracked, r.nInliers, (uint16_t)n, (uint8_t)r.valid};
+  const uint32_t pointBytes = (uint32_t)n * sizeof(msg::PointMsg);
+
+  if (m4ok) m4.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, pointBytes);   // all points, inliers marked
+
+  if (!SEND_POINTS) h.count = 0;
+  pc.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, SEND_POINTS ? pointBytes : 0);
 }
 
 void sendFrame(const vision::Frame& f) {

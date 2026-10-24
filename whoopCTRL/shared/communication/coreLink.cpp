@@ -17,6 +17,8 @@ static uint8_t           coreRxBuf[CoreLink::RX_SIZE];
 static volatile uint32_t coreRxHead    = 0;     // next write position (RPC thread only)
 static volatile uint32_t coreRxTail    = 0;     // next read position (reader only)
 static volatile uint32_t coreOverflows = 0;
+static uint32_t          coreRxLeft    = 0;     // bytes of the current packet still to come (RPC thread only)
+static bool              coreRxKeep    = true;  // keep or drop the current packet
 
 // send: bytes collected under the lock, sent as one RPC message per CHUNK
 static rtos::Mutex coreTxMutex;                 // recursive: lock() may nest
@@ -25,13 +27,26 @@ static size_t      coreTxLen     = 0;
 static int         coreLockDepth = 0;
 
 // Called by the RPC thread with one whole message from the other core.
-// A message that does not fit is dropped WHOLE: a packet up to CHUNK bytes is one message,
-// so the buffer always holds complete packets and the next packet arrives cleanly
+// A packet bigger than CHUNK arrives as several messages, and a new packet always starts a
+// new message. Keep or drop is decided ONCE, at the packet's first message, for the whole
+// packet (its length is in the header), so the buffer only ever holds complete packets
 // (keeping half of one would corrupt the packet after it too).
 static void onCoreRaw(const uint8_t* buf, size_t len) {
   const uint32_t head = coreRxHead;
   const uint32_t space = (coreRxTail + CoreLink::RX_SIZE - head - 1) % CoreLink::RX_SIZE;
-  if (len > space) {
+
+  if (coreRxLeft == 0) {                                   // the first message of a packet
+    uint32_t total = len;                                  // no packet header: just this message
+    if (len >= 7 && buf[0] == 0xA5 && buf[1] == 0x5A) {    // A5 5A | type | len u32 (communication.cpp)
+      const uint32_t payload = buf[3] | (uint32_t)buf[4] << 8 | (uint32_t)buf[5] << 16 | (uint32_t)buf[6] << 24;
+      total = 7 + payload + 2;                             // header + payload + crc
+    }
+    coreRxKeep = total <= space;                           // room for the WHOLE packet now
+    coreRxLeft = total;
+  }
+  coreRxLeft = coreRxLeft > len ? coreRxLeft - len : 0;
+  if (!coreRxKeep || len > space) {                        // (len > space cannot happen once kept)
+    coreRxKeep = false;
     coreOverflows += len;
     return;
   }

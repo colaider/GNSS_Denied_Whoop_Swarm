@@ -54,9 +54,15 @@ class ToF {
   // How old the newest valid measurement is (0xFFFFFFFF if there never was one).
   uint32_t validAgeUs(uint32_t nowUs) const;
   uint32_t timeouts() const { return timeouts_; }             // I2C timeouts so far
+  uint32_t restarts() const { return restarts_; }             // times update() restarted a stopped sensor
 
   // Height above a flat floor from a range measured with the drone tilted (radians).
   static float height(float rangeM, float roll, float pitch);
+
+  // The same from the attitude quaternion q (w, x, y, z, world from body, world z up) and the
+  // beam direction in body axes (unit vector): range * how far the beam points down.
+  // 0 when the beam points less than ~25 deg below the horizon (it sees a wall, not the floor).
+  static float height(float rangeM, const float q[4], float bx, float by, float bz);
 
   // Raw sensor values -> a reading (timestamp, units, validity). Public for testing.
   ToFReading make(uint32_t readyUs, uint16_t rangeMm, uint8_t status, float signalMcps, float ambientMcps) const;
@@ -66,6 +72,8 @@ class ToF {
   ToFReading last_, lastValid_;
   bool       haveValid_ = false;
   uint32_t   timeouts_  = 0;
+  uint32_t   restarts_  = 0;
+  uint32_t   lastDataUs_ = 0;                                  // when the sensor last had data
 };
 
 }  // namespace sensors

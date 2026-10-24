@@ -32,6 +32,8 @@ bool FlowEstimator::update(const ccv::Image& img, uint32_t seq, uint32_t tUs) {
   result_.t1Us = tUs;
   result_.fx   = fx_;
   result_.fy   = fy_;
+  result_.cx   = cx_;
+  result_.cy   = cy_;
   if (!lk_.newFrame(img)) return false;            // image too large for the tracker
 
   const int n = rep_.count();

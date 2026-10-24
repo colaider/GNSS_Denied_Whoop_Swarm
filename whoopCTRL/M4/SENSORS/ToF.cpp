@@ -13,6 +13,10 @@ namespace sensors {
 // library. ('tof' prefix: sketches include several .cpp files into one compile unit.)
 static VL53L1X tofSensor;
 
+// The period must be longer than the budget: with both 20 ms the sensor skips every other
+// slot (measured 26/s on the board); + 4 ms gives ~40/s.
+static uint32_t tofPeriodMs(uint32_t budgetUs) { return budgetUs / 1000 + 4; }
+
 ToF::ToF(const ToFConfig& cfg) : cfg_(cfg) {
   const uint32_t minBudget = cfg_.longMode ? 33000 : 20000;   // the sensor's minimums
   if (cfg_.budgetUs < minBudget) cfg_.budgetUs = minBudget;
@@ -26,13 +30,26 @@ bool ToF::begin() {
   if (!tofSensor.init()) return false;
   tofSensor.setDistanceMode(cfg_.longMode ? VL53L1X::Long : VL53L1X::Short);
   if (!tofSensor.setMeasurementTimingBudget(cfg_.budgetUs)) return false;
-  tofSensor.startContinuous(cfg_.budgetUs / 1000); // a new measurement every budget
+  tofSensor.startContinuous(tofPeriodMs(cfg_.budgetUs));
+  lastDataUs_ = shared::nowUs();
   return true;
 }
 
 bool ToF::update() {
-  if (!tofSensor.dataReady()) return false;        // nothing new: return at once
+  if (!tofSensor.dataReady()) {                    // nothing new: return at once...
+    // ...unless nothing came for 10 periods: the sensor stopped (seen on the board: an I2C
+    // glitch can leave its data-ready flag set forever). Start it measuring again.
+    const uint32_t now = shared::nowUs();
+    if (now - lastDataUs_ > 10 * 1000 * tofPeriodMs(cfg_.budgetUs)) {
+      tofSensor.stopContinuous();
+      tofSensor.startContinuous(tofPeriodMs(cfg_.budgetUs));
+      lastDataUs_ = now;
+      restarts_++;
+    }
+    return false;
+  }
   const uint32_t t = shared::nowUs();
+  lastDataUs_ = t;
   tofSensor.read(false);                           // non-blocking: the data is already there
   if (tofSensor.timeoutOccurred()) timeouts_++;
 
@@ -64,6 +81,13 @@ uint32_t ToF::validAgeUs(uint32_t nowUs) const {
 
 float ToF::height(float rangeM, float roll, float pitch) {
   return rangeM * cosf(roll) * cosf(pitch);
+}
+
+float ToF::height(float rangeM, const float q[4], float bx, float by, float bz) {
+  const float w = q[0], x = q[1], y = q[2], z = q[3];
+  // world z of the beam: the bottom row of the rotation matrix of q, times the beam
+  const float up = 2.0f * (x * z - w * y) * bx + 2.0f * (y * z + w * x) * by + (1.0f - 2.0f * (x * x + y * y)) * bz;
+  return -up < 0.4f ? 0.0f : rangeM * -up;
 }
 
 }  // namespace sensors

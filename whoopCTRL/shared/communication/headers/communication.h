@@ -25,7 +25,7 @@
 namespace comm {
 
 constexpr int      MAX_LINKS      = 4;     // links one sketch can register
-constexpr uint32_t MAX_RX_PAYLOAD = 256;   // received packets are small (commands, results)
+constexpr uint32_t MAX_RX_PAYLOAD = 1408;  // the biggest received packet: flow with all its points (msg::FLOW_MAX_BYTES)
 
 // Makes a link available to Communication::begin() under its name(). False if full.
 bool addLink(Link& link);

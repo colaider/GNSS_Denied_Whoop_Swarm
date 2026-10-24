@@ -72,6 +72,7 @@ class IMU {
   Vec3     angularVelocity() const { return rate_; }    // rad/s, body frame, bias removed
   Vec3     acceleration() const { return last_.acc; }   // g, body frame, gravity included
   Attitude attitude() const;                             // rad
+  const float* quaternion() const { return q_; }         // w, x, y, z: world from body
   Vec3     worldAcceleration() const { return accW_; }  // m/s^2, world frame, gravity removed
   Vec3     velocity() const { return vel_; }            // m/s, world frame, x / y only
   Vec3     gyroBias() const { return bias_; }           // rad/s

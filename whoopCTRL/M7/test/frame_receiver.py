@@ -22,7 +22,7 @@ MAGIC = b"\xA5\x5A"
 PKT_FRAME, PKT_LOG, PKT_RAW, PKT_CMD, PKT_FLOW = 1, 2, 3, 4, 5   # same as comm::PacketType
 FRAME_HDR = struct.Struct("<5I2H4f")    # FrameHeader in test.ino (40 bytes)
 RAW_HDR = struct.Struct("<I2H")         # RawHeader (8 bytes)
-FLOW_HDR = struct.Struct("<4I7f3HB")    # FlowHeader (51 bytes)
+FLOW_HDR = struct.Struct("<4I9f3HB")    # FlowHeader (59 bytes)
 POINT = struct.Struct("<2H4fB")         # PointMsg (21 bytes)
 MAX_LEN = 1 << 20                       # anything longer is garbage, not a packet
 
@@ -82,7 +82,7 @@ def decode_raw(payload):
 
 def decode_flow(payload):
     """FLOW payload -> (result dict, list of point dicts)."""
-    (seq, t0, t1, flow_us, tx, ty, angle, scale, rms, fx, fy,
+    (seq, t0, t1, flow_us, tx, ty, angle, scale, rms, fx, fy, cx, cy,
      n_tracked, n_inliers, count, valid) = FLOW_HDR.unpack_from(payload)
     res = dict(seq=seq, t0=t0, t1=t1, flow_us=flow_us, tx=tx, ty=ty, angle=angle, scale=scale,
                rms=rms, fx=fx, fy=fy, tracked=n_tracked, inliers=n_inliers, valid=bool(valid))
