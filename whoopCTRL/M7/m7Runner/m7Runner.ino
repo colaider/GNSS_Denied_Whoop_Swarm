@@ -26,6 +26,8 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/shared/communication/coreLink.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/COMM/usbLink.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/cmeraReader.cpp"
+#include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/frameCapture.cpp"
+#include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/dcmiCapture.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/flowEstimator.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/GFTT.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/pyramidLK.cpp"
@@ -115,6 +117,17 @@ void sendStats() {
             grabSum / frames, pyramidSum / frames, trackSum / frames, ransacSum / frames, replenishSum / frames,
             sendSum / frames);
     logLine("M7: corner searches %lu.%02lu sectors per frame", searchSum / frames, searchSum * 100 / frames % 100);
+    logLine("M7 camera: grab errors %lu, frames with a late time stamp %lu (both should stay 0)",
+            camera.stats().grabErrors, camera.stats().inexactStamps);
+    vision::SensorStatus ss;                   // ~3 ms of I2C: absorbed by the double-buffered capture
+    if (camera.readSensor(ss)) {
+      logLine("M7 camera: exposure %lu us (%lu rows, limit %lu), AEC %lu, gain global 0x%02lx pre 0x%02lx",
+              ss.exposureUs, ss.exposureRows, camera.exposureLimitRows(), ss.aec, ss.globalGain, ss.preGain);
+      logLine("M7 camera: post gain 0x%02lx, brightness %lu (AEC target %lu), image time = readout end - %lu us",
+              ss.postGain, ss.brightness, ss.target, camera.exposureDelayUs());
+    } else {
+      logLine("M7 camera: sensor registers did not answer (I2C)");
+    }
   }
   frames = flowUsSum = 0;
   grabSum = pyramidSum = trackSum = ransacSum = replenishSum = sendSum = searchSum = 0;
@@ -139,6 +152,10 @@ void setup() {
   
   flow.begin(camera.cropIntrinsics());
   pc.log("camera + flow ok");
+  const vision::CameraConfig& cc = camera.config();
+  const unsigned long row100 = (unsigned long)(camera.rowTimeUs() * 100.0f + 0.5f);
+  logLine("M7 camera: frame period %lu us, row %lu.%02lu us, exposure mode %lu (0 auto, 1 capped, 2 manual), limit %lu rows",
+          camera.framePeriodUs(), row100 / 100, row100 % 100, (unsigned long)cc.exposure, camera.exposureLimitRows());
 }
 
 void loop() {
@@ -152,7 +169,7 @@ void loop() {
   }
 
   const uint32_t t0 = shared::nowUs();
-  flow.update({f.data, f.width, f.height}, f.seq, f.tEndUs);
+  flow.update({f.data, f.width, f.height}, f.seq, f.tUs);   // when the image was seen, for the M4's gyro
   const uint32_t flowUs = shared::nowUs() - t0;
   frames++;
   flowUsSum += flowUs;
@@ -174,6 +191,6 @@ void loop() {
   }
   sendSum += shared::nowUs() - t1;
 
-  routeFromM4();                               // again: the grab waited a whole frame
+  routeFromM4();                               // again: the grab may have waited most of a frame
   sendStats();
 }

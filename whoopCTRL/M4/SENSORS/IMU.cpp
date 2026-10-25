@@ -113,9 +113,13 @@ void IMU::step(const ImuSample& s) {
     const float w = q_[0], x = q_[1], y = q_[2], z = q_[3];
 
     // 1) roll / pitch correction from the accelerometer (complementary filter): turn the
-    //    estimated "up" towards the measured one, only while the drone is not accelerating
+    //    estimated "up" towards the measured one, only while the drone has been calm a while
+    //    (not accelerating, not rotating fast)
     const float an = sqrtf(s.acc.x * s.acc.x + s.acc.y * s.acc.y + s.acc.z * s.acc.z);
-    if (an > 1.0f - cfg_.accelGate && an < 1.0f + cfg_.accelGate) {
+    const float rate = sqrtf(wx * wx + wy * wy + wz * wz);
+    const bool  calm = an > 1.0f - cfg_.accelGate && an < 1.0f + cfg_.accelGate && rate < cfg_.accelGateDps * DEG2RAD;
+    calmS_ = calm ? calmS_ + dt : 0.0f;
+    if (calmS_ >= cfg_.accelCalmS) {
       const float mx = s.acc.x / an, my = s.acc.y / an, mz = s.acc.z / an;   // measured up
       const float vx = 2.0f * (x * z - w * y);                               // estimated up
       const float vy = 2.0f * (y * z + w * x);                               // (world z in body)

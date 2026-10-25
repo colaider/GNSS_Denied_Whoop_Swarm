@@ -1,5 +1,9 @@
 #include "headers/SENSORS.h"
 
+#include <math.h>
+
+#include "../../shared/headers/sharedClock.h"
+
 namespace sensors {
 
 // A Vec3 component by axis number (0 = x, 1 = y, 2 = z). 'sens' prefix: sketches include
@@ -7,7 +11,8 @@ namespace sensors {
 static float sensGet(const Vec3& v, int i) { return i == 0 ? v.x : (i == 1 ? v.y : v.z); }
 static void  sensSet(Vec3& v, int i, float f) { if (i == 0) v.x = f; else if (i == 1) v.y = f; else v.z = f; }
 
-Sensors::Sensors(const SensorsConfig& cfg) : cfg_(cfg), imu_(cfg.imu), tof_(cfg.tof) {}
+Sensors::Sensors(const SensorsConfig& cfg)
+    : cfg_(cfg), imu_(cfg.imu), tof_(cfg.tof), hkf_(cfg.horizontal), vkf_(cfg.vertical) {}
 
 bool Sensors::begin() {
   const bool imuOk = imu_.begin();
@@ -24,6 +29,17 @@ bool Sensors::startup(uint32_t ms) {
   tofN_ = tofHead_ = 0;
   imuPosUs_ = imu_.lastSample().tUs;               // integration starts from the last startup sample
   addGyro(imu_.lastSample());                      // ...and so does the gyro history (rotation 0)
+  const uint32_t now = shared::nowUs();            // not lastSample(): startup() does not update it
+  hkf_.reset(now);                                 // the filters: at rest at (0, 0, height)
+  vkf_.reset(now, height());
+  hkf_.setMaxDt(cfg_.imu.maxDtS);
+  vkf_.setMaxDt(cfg_.imu.maxDtS);
+  fusDbg_ = FusionDebug();
+  hFix_ = vFix_ = Fix::TRACKING;                   // still at startup: as good as measured
+  camSeenUs_ = tofSeenUs_ = pseudoUs_ = now;
+  still_ = false;
+  stillForS_ = 0.0f;
+  k_ = 1.0f;
   return true;
 }
 
@@ -41,6 +57,19 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
       }
       imuPosUs_ = s.tUs;
       addGyro(s);
+
+      // how hard it moves: rotation rate and how far |acc| is from 1 g
+      const Vec3 w = imu_.angularVelocity();
+      const float rate = sqrtf(w.x * w.x + w.y * w.y + w.z * w.z);
+      const float dev  = fabsf(sqrtf(s.acc.x * s.acc.x + s.acc.y * s.acc.y + s.acc.z * s.acc.z) - 1.0f);
+      k_ = 1.0f + rate / cfg_.kRateRadS + dev / cfg_.kAccG;
+      const bool stillNow = rate < cfg_.stillDps * 0.017453293f && dev < cfg_.stillG;
+      stillForS_ = stillNow ? stillForS_ + (dt > 0.0f && dt <= cfg_.imu.maxDtS ? dt : 0.0f) : 0.0f;
+      still_ = cfg_.useStill && stillForS_ >= cfg_.stillS;
+
+      const Vec3 a = imu_.worldAcceleration();     // both filters step with every sample
+      hkf_.predict(s.tUs, a.x, a.y, imu_.attitude().yaw, k_);
+      vkf_.predict(s.tUs, a.z, k_);
     }
   }
 
@@ -51,6 +80,21 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
       tofR_[tofHead_] = tof_.last().rangeM;
       tofHead_ = (tofHead_ + 1) % TOF_HIST;
       if (tofN_ < TOF_HIST) tofN_++;
+
+      // into the vertical filter, unless tilted too much (h / range = cos of the beam's tilt)
+      const float h = height();
+      const float range = tof_.last().rangeM;
+      if (imu_.ready() && h > range * cosf(cfg_.tofMaxTiltDeg * 0.017453293f)) {
+        const uint32_t t = tof_.last().tUs;
+        fusDbg_.tofStd = cfg_.tofStd + cfg_.tofStdRange * range;
+        if (vFix_ == Fix::LOST) {                  // back after long: take it as it is
+          fusDbg_.tofResult = vkf_.setHeight(t, h, fusDbg_.tofStd) ? 3 : -1;
+        } else {
+          fusDbg_.tofResult = (int8_t)vkf_.updateHeight(t, h, fusDbg_.tofStd);
+        }
+        fusDbg_.tofUs = t;
+        tofSeenUs_ = t;
+      }
     }
   }
 
@@ -108,9 +152,103 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
       camPos_.z = height();
       camUs_    = tMid;
       camValid_ = true;
+
+      // into the horizontal filter at tMid. Per point: the tracking error (rmsPx) turned into
+      // m/s like the velocity (* Z / (f dt)); averaged over the inliers it shrinks by sqrt(n)
+      // While rotating, the rotation's own image motion (|rot| * Z / dt as a speed) is far
+      // larger than the translation and is never removed exactly: a share of it is added.
+      const float px = flow->rmsPx > cfg_.camMinPx ? flow->rmsPx : cfg_.camMinPx;
+      const float pairS = (flow->t1Us - flow->t0Us) * 1e-6f;
+      const float perPoint = px * tof.rangeM / (flow->fx * pairS);
+      const float speed = sqrtf(world.x * world.x + world.y * world.y) * cfg_.camStdScale;
+      const Vec3& r = camDbg_.rot;
+      const float rotV = sqrtf(r.x * r.x + r.y * r.y + r.z * r.z) * tof.rangeM / pairS * cfg_.camStdRot;
+      fusDbg_.camStd = sqrtf(perPoint * perPoint / flow->nInliers + cfg_.camStdFloor * cfg_.camStdFloor +
+                             speed * speed + rotV * rotV);
+      if (hFix_ == Fix::LOST) {                    // back after long: the filter's velocity is a guess, take this one
+        fusDbg_.camResult = hkf_.setVelocity(tMid, world.x, world.y, fusDbg_.camStd) ? 3 : -1;
+      } else {
+        fusDbg_.camResult = (int8_t)hkf_.updateVelocity(tMid, world.x, world.y, fusDbg_.camStd);
+      }
+      fusDbg_.camUs = tMid;
+      camSeenUs_ = tMid;
     }
   }
+  if (imu_.ready()) updateFix(imu_.lastSample().tUs);
   return got;
+}
+
+// The state machine: what each filter does without its measurement (see SENSORS.h).
+void Sensors::updateFix(uint32_t nowUs) {
+  auto fix = [](uint32_t age, float coastS, float lostS) {
+    return age > lostS * 1e6f ? Fix::LOST : (age > coastS * 1e6f ? Fix::COASTING : Fix::TRACKING);
+  };
+  const int32_t camAge = (int32_t)(nowUs - camSeenUs_), tofAge = (int32_t)(nowUs - tofSeenUs_);
+  hFix_ = fix(camAge > 0 ? camAge : 0, cfg_.camCoastS, cfg_.camLostS);
+  vFix_ = fix(tofAge > 0 ? tofAge : 0, cfg_.tofCoastS, cfg_.tofLostS);
+
+  // made-up measurements, 20 times a second: still -> v = 0 (good), LOST -> v = 0 (weak)
+  if ((uint32_t)(nowUs - pseudoUs_) < 50000) return;
+  pseudoUs_ = nowUs;
+  if (hFix_ != Fix::TRACKING && (still_ || hFix_ == Fix::LOST))
+    hkf_.zeroVelocity(nowUs, still_ ? cfg_.stillVelStd : cfg_.lostVelStd);
+  if (vFix_ != Fix::TRACKING && (still_ || vFix_ == Fix::LOST))
+    vkf_.zeroVelocity(nowUs, still_ ? cfg_.stillVelStd : cfg_.lostVelStd);
+}
+
+Pose Sensors::pose() const {
+  Pose p;
+  p.x   = hkf_.estimate().x[filters::HorizontalKF::PX];
+  p.y   = hkf_.estimate().x[filters::HorizontalKF::PY];
+  p.z   = vkf_.estimate().x[filters::VerticalKF::Z];
+  p.yaw = yaw();
+  return p;
+}
+
+Vec3 Sensors::position() const {
+  const Pose p = pose();
+  Vec3 v;
+  v.x = p.x;
+  v.y = p.y;
+  v.z = p.z;
+  return v;
+}
+
+Vec3 Sensors::velocity() const {
+  Vec3 v;
+  v.x = hkf_.estimate().x[filters::HorizontalKF::VX];
+  v.y = hkf_.estimate().x[filters::HorizontalKF::VY];
+  v.z = vkf_.estimate().x[filters::VerticalKF::VZ];
+  return v;
+}
+
+// 1 std of a state: the square root of its variance (the diagonal of P)
+Vec3 Sensors::positionStd() const {
+  using H = filters::HorizontalKF;
+  using V = filters::VerticalKF;
+  Vec3 v;
+  v.x = sqrtf(hkf_.estimate().P[H::PX][H::PX]);
+  v.y = sqrtf(hkf_.estimate().P[H::PY][H::PY]);
+  v.z = sqrtf(vkf_.estimate().P[V::Z][V::Z]);
+  return v;
+}
+
+Vec3 Sensors::velocityStd() const {
+  using H = filters::HorizontalKF;
+  using V = filters::VerticalKF;
+  Vec3 v;
+  v.x = sqrtf(hkf_.estimate().P[H::VX][H::VX]);
+  v.y = sqrtf(hkf_.estimate().P[H::VY][H::VY]);
+  v.z = sqrtf(vkf_.estimate().P[V::VZ][V::VZ]);
+  return v;
+}
+
+Vec3 Sensors::accBias() const {
+  Vec3 v;
+  v.x = hkf_.estimate().x[filters::HorizontalKF::BX];
+  v.y = hkf_.estimate().x[filters::HorizontalKF::BY];
+  v.z = vkf_.estimate().x[filters::VerticalKF::BZ];
+  return v;
 }
 
 float Sensors::height() const {

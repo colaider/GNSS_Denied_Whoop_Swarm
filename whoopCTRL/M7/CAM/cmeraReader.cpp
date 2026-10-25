@@ -13,20 +13,54 @@ CameraReader::CameraReader(const CameraConfig& cfg) : cfg_(cfg) {}
 bool CameraReader::begin() {
   if (!computeCropGeometry()) return false;
 
-  if (!raw_) {
-    // raw Bayer window, 1 byte per pixel. 32-byte aligned and a whole number of
-    // 32-byte cache lines, because the library invalidates the D-cache over it after DMA.
-    uint32_t bytes = ((uint32_t)windowW_ * windowH_ + 31) & ~31u;
-    uint8_t* mem = (uint8_t*)malloc(bytes + 32);
-    if (!mem) return false;
-    raw_ = (uint8_t*)(((uintptr_t)mem + 31) & ~(uintptr_t)31);
-    fb_.setBuffer(raw_);
+  if (!rawBuf_[0]) {
+    // two raw Bayer windows, 1 byte per pixel. 32-byte aligned and a whole number of
+    // 32-byte cache lines: the D-cache is invalidated over them around each DMA.
+    rawBytes_ = ((uint32_t)windowW_ * windowH_ + 31) & ~31u;
+    for (int i = 0; i < 2; i++) {
+      uint8_t* mem = (uint8_t*)malloc(rawBytes_ + 32);
+      if (!mem) return false;
+      rawBuf_[i] = (uint8_t*)(((uintptr_t)mem + 31) & ~(uintptr_t)31);
+    }
+    fb_.setBuffer(rawBuf_[0]);
   }
-  return configureSensor();
+  if (!configureSensor()) return false;
+
+  // exposure with the nominal row time, then the real row time from a few library grabs
+  // (they also check the camera answers and leave the DCMI + DMA set up for FrameCapture),
+  // then the exposure again if the row time was off
+  rowUs_ = cfg_.nominalRowUs;
+  if (!applyExposure() || !measureRowTime()) return false;
+  if (rowUs_ < cfg_.nominalRowUs * 0.97f || rowUs_ > cfg_.nominalRowUs * 1.03f) applyExposure();
+
+  // the crop's centre row -> the last row of the transferred window, in sensor rows
+  centreToEndRows_ = (uint16_t)((windowH_ - (cropY0_ + cfg_.cropHeight)) * subsampleForMode(cfg_.sensorMode));
+  SensorStatus s;
+  readSensor(s);                               // sets the exposure delay from the real exposure
+  if (cfg_.exposureDelayUs) delayUs_ = cfg_.exposureDelayUs;
+
+  cap_.begin(rawBuf_[0], rawBuf_[1], rawBytes_);   // from now on: frames into the two buffers in turn
+  return true;
+}
+
+bool CameraReader::readSensor(SensorStatus& s) {
+  bool ok = regWrite(0xFE, 0x00);
+  s.exposureRows = (uint16_t)(((regRead(0x03) & 0x1F) << 8) | regRead(0x04));
+  s.globalGain   = regRead(0xB0);
+  s.preGain      = regRead(0xB1);
+  s.postGain     = regRead(0xB2);
+  s.aec          = regRead(0xB6) & 0x01;
+  ok &= regWrite(0xFE, 0x01);
+  s.target       = regRead(0x13);
+  s.brightness   = regRead(0x14);
+  ok &= regWrite(0xFE, 0x00);
+  s.exposureUs   = (uint32_t)(s.exposureRows * rowUs_ + 0.5f);
+  if (ok && !cfg_.exposureDelayUs) delayUs_ = exposure::delayUs(centreToEndRows_, s.exposureRows, rowUs_);
+  return ok;
 }
 
 bool CameraReader::getFrame(Frame& out) {
-  if (!raw_ || !grab()) return false;
+  if (!rawBuf_[0] || !grab()) return false;
 
   uint8_t* dst = out_[outIdx_];
   outIdx_ ^= 1;                                // next frame goes into the other buffer
@@ -40,6 +74,7 @@ bool CameraReader::getFrame(Frame& out) {
   out.height = cfg_.cropHeight;
   out.seq    = ++seq_;
   out.tEndUs = tEndUs_;
+  out.tUs    = tEndUs_ - delayUs_;
   stats_.frames++;
   return true;
 }
@@ -53,16 +88,52 @@ bool CameraReader::configureSensor() {
   // Transfer only the centre window, at the sensor mode's pixel scale.
   if (cfg_.windowMode != cfg_.sensorMode && cam_.zoomToCenter(cfg_.windowMode) != 0) return false;
 
-  if (cfg_.exposureRows) setManualExposure(cfg_.exposureRows, cfg_.gain);
   return true;
 }
 
-void CameraReader::setManualExposure(uint16_t rows, uint8_t gain) {
-  regWrite(0xFE, 0x00);                        // register page 0
-  regWrite(0xB6, regRead(0xB6) & 0xFE);        // auto exposure off (bit 0)
-  regWrite(0x03, (rows >> 8) & 0xFF);          // exposure time, in sensor rows
-  regWrite(0x04, rows & 0xFF);
-  regWrite(0xB0, gain);                        // global gain
+bool CameraReader::applyExposure() {
+  exposure::Reg r[24];
+  int n = 0;
+  switch (cfg_.exposure) {
+    case ExposureMode::AUTO:
+      limitRows_ = 0;
+      return true;                             // the library's settings as they are
+    case ExposureMode::AUTO_CAPPED:
+      limitRows_ = exposure::usToRows(cfg_.maxExposureUs, rowUs_);
+      n = exposure::capRegs(limitRows_, cfg_.maxPostGain, 0, r);
+      break;
+    case ExposureMode::MANUAL:
+      limitRows_ = exposure::usToRows(cfg_.manualExposureUs, rowUs_);
+      n = exposure::manualRegs(limitRows_, cfg_.gain, r);
+      break;
+  }
+  return writeRegs(r, n);
+}
+
+bool CameraReader::writeRegs(const exposure::Reg* r, int n) {
+  bool ok = true;
+  for (int i = 0; i < n; i++) ok &= regWrite(r[i].reg, r[i].value);   // the page is set by 0xfe writes in the list
+  return ok;
+}
+
+bool CameraReader::measureRowTime() {
+  // Back-to-back snapshot grabs catch consecutive frames (nothing done in between), so the
+  // time between their ends is the frame period. The first ones let the AEC settle under the
+  // new limit (a longer exposure would stretch the frame); the shortest later gap is taken.
+  uint32_t last = 0, best = 0xFFFFFFFFu;
+  for (int i = 0; i < 8; i++) {
+    if (cam_.grabFrame(fb_, 500) != 0) return false;
+    const uint32_t t = shared::nowUs();
+    if (i >= 4 && t - last < best) best = t - last;
+    last = t;
+  }
+  regWrite(0xFE, 0x00);
+  const uint16_t vb   = (uint16_t)(((regRead(0x07) & 0x1F) << 8) | regRead(0x08));
+  const uint16_t winH = (uint16_t)(((regRead(0x0D) & 0x07) << 8) | regRead(0x0E));
+  if (vb + winH == 0) return false;
+  periodUs_ = best;
+  rowUs_    = exposure::rowTimeUs(best, vb, winH);
+  return true;
 }
 
 uint8_t CameraReader::regRead(uint8_t reg) {
@@ -73,19 +144,20 @@ uint8_t CameraReader::regRead(uint8_t reg) {
   return CameraWire.available() ? CameraWire.read() : 0;
 }
 
-void CameraReader::regWrite(uint8_t reg, uint8_t val) {
+bool CameraReader::regWrite(uint8_t reg, uint8_t val) {
   CameraWire.beginTransmission((uint8_t)GC2145_I2C_ADDR);
   CameraWire.write(reg);
   CameraWire.write(val);
-  CameraWire.endTransmission();
+  return CameraWire.endTransmission() == 0;
 }
 
 bool CameraReader::grab() {
-  uint32_t t0 = shared::nowUs();
-  int err = cam_.grabFrame(fb_, 500);          // snapshot: waits for the next full frame
-  tEndUs_ = shared::nowUs();                   // shared clock: the M4 can compare it directly
-  stats_.lastGrabUs = tEndUs_ - t0;
-  if (err != 0) { stats_.grabErrors++; return false; }
+  bool exact = true;
+  const uint8_t* raw = cap_.next(500000, tEndUs_, exact);   // tEndUs_: shared clock, the M4 compares it directly
+  stats_.lastGrabUs = cap_.lastWaitUs();
+  if (!raw) { stats_.grabErrors++; return false; }
+  if (!exact) stats_.inexactStamps++;
+  raw_ = (uint8_t*)raw;
   return true;
 }
 
@@ -149,6 +221,16 @@ const calib::CameraIntrinsics* CameraReader::intrinsicsForMode(int32_t mode) {
     case CAMERA_R320x240: return &calib::CAM_320x240;
     case CAMERA_R640x480: return &calib::CAM_640x480;
     default:              return nullptr;
+  }
+}
+
+int CameraReader::subsampleForMode(int32_t mode) {
+  switch (mode) {                              // GC2145::setResolutionWithZoom: window = output x this
+    case CAMERA_R160x120: return 4;
+    case CAMERA_R320x240:
+    case CAMERA_R320x320: return 3;
+    case CAMERA_R640x480: return 2;
+    default:              return 1;
   }
 }
 

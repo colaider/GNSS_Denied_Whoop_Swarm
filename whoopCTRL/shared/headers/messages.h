@@ -170,7 +170,9 @@ struct __attribute__((packed)) Telemetry {       // PKT_TELEM payload, M4 -> PC 
 static_assert(sizeof(Telemetry) == 54, "Python '<IB2HBI10f'");
 
 // ---------------------------------------------------------------- sensor test
-enum SensorFlags : uint8_t { SENS_CAM_VALID = 1, SENS_IMU_READY = 2, SENS_TOF_VALID = 4 };
+// bits 0-3: flags; bits 4-5: horizontal Fix, bits 6-7: vertical Fix (0 tracking, 1 coasting, 2 lost)
+enum SensorFlags : uint8_t { SENS_CAM_VALID = 1, SENS_IMU_READY = 2, SENS_TOF_VALID = 4, SENS_STILL = 8,
+                             SENS_HFIX_SHIFT = 4, SENS_VFIX_SHIFT = 6 };
 
 struct __attribute__((packed)) SensorState {     // PKT_SENSORS payload, with every camera update
   uint32_t tUs;                                  // shared clock, when it was sent
@@ -186,7 +188,20 @@ struct __attribute__((packed)) SensorState {     // PKT_SENSORS payload, with ev
   float    rotX, rotY, rotZ;                     // gyro rotation over the frame pair, camera axes, rad
   float    dZ;                                   // distance change over the frame pair, m
   float    camVxC, camVyC;                       // velocity in camera axes, m/s
+  // fused (the Kalman filters, Sensors::pose / velocity)
+  float    fusX, fusY, fusZ, fusVx, fusVy, fusVz;   // position (z = height above the floor) + velocity, world
+  float    stdX, stdY, stdZ, stdVx, stdVy, stdVz;   // how sure the filters are, 1 std
+  float    biasX, biasY, biasZ;                  // accelerometer bias found, m/s^2 (x / y body, z world)
+  float    accWX, accWY, accWZ;                  // IMU world acceleration (gravity removed), m/s^2: the filters' input
+  float    height;                               // ToF height, tilt corrected, m: the vertical filter's measurement
+  // checking the noise values: innovation = measured - predicted, should stay within +-its std
+  float    camInnovX, camInnovY, camInnovStdX, camInnovStdY;   // last camera velocity update, m/s
+  float    tofInnov, tofInnovStd;                // last ToF height update, m
+  float    camStd, tofStd;                       // the measurement std given to the filters
+  int8_t   camResult, tofResult;                 // 2/1 applied, 0 refused (outlier), -1 too old,
+                                                 // 3 reset (first after LOST); ToF 2: floor step
+  uint16_t camForced, tofSteps;                  // camera forced in after refusals / floor steps, since startup
 };
-static_assert(sizeof(SensorState) == 101, "Python '<3IB22f'");
+static_assert(sizeof(SensorState) == 215, "Python '<3IB49f2b2H'");
 
 }  // namespace msg

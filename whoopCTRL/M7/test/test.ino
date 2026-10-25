@@ -16,6 +16,8 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/shared/communication/communication.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/COMM/usbLink.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/cmeraReader.cpp"
+#include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/frameCapture.cpp"
+#include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/dcmiCapture.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/flowEstimator.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/GFTT.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/pyramidLK.cpp"
@@ -79,7 +81,7 @@ void loop() {
   }
 
   const uint32_t t0 = shared::nowUs();
-  flow.update({f.data, f.width, f.height}, f.seq, f.tEndUs);
+  flow.update({f.data, f.width, f.height}, f.seq, f.tUs);
   const uint32_t flowUs = shared::nowUs() - t0;
 
   if (rawRequested) {                            // the untouched Bayer image of this same frame

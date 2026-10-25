@@ -45,7 +45,11 @@ struct ImuSample {                 // one calibrated sample, body frame
 
 struct ImuConfig {
   float accelTrust = 1.0f;         // how fast the accelerometer pulls roll/pitch back (1/s)
-  float accelGate  = 0.15f;        // use the accelerometer only if |acc| is within 1 g +- this
+  float accelGate  = 0.15f;        // use the accelerometer only if |acc| is within 1 g +- this,
+  float accelGateDps = 60.0f;      // the rotation is slower than this,
+  float accelCalmS = 0.1f;         // and both have been true for this long: while shaking, |acc|
+                                   // passes 1 g for an instant at a tilted direction, and taking
+                                   // it tilted the attitude by ~8 deg (gravity leak 1.4 m/s^2)
   float maxDtS     = 0.05f;        // larger gaps between samples are not integrated
 };
 
@@ -99,6 +103,7 @@ class IMU {
   Vec3      vel_;                               // world velocity, m/s
   ImuSample last_;
   bool      haveLast_ = false;                  // a previous sample exists (for dt)
+  float     calmS_    = 0.0f;                   // how long the accelerometer has been usable
   bool      started_  = false;
 };
 

@@ -15,13 +15,14 @@ struct FlowConfig {
   int   window        = 9;       // LK window, pixels (odd)
   float quality       = 0.005f;   // GFTT: keep corners >= quality * best corner
   float minDistance   = 8.0f;    // GFTT: spacing between points, pixels
-  int   maxPoints     = 32;      // budget: points alive in the whole image (tracking cost grows with it;
-                                 // was 100, which Replenish caps at 64: ~12 fps while moving)
+  int   maxPoints     = 48;      // budget: points alive in the whole image. Tracking cost grows with it:
+                                 // 64 (+ old replenish) gave ~12 fps while moving; 32 kept only ~10
+                                 // points tracked (68% valid frames). 48 with refill at 75% sits between.
   int   lkIterations  = 5;       // LK iterations per pyramid level at most (was 10)
   int   ransacIters   = 20;      // RANSAC random tries
   float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier
   int   minInliers    = 6;       // fewer -> the result is not valid
-  float refillBelow   = 0.5f;    // search a sector for new points when below this share of its quota
+  float refillBelow   = 0.75f;   // search a sector for new points when below this share of its quota
   int   searchesPerFrame = 1;    // most sectors searched per frame (the search is the slow part)
 };
 

@@ -1,10 +1,16 @@
 # Shows what the M4 sensor test measures, live over USB serial:
 #   window "Nicla camera + flow": the camera image with its tracked points (as M7/test/frame_receiver.py)
 #     plus the M4's numbers: camera position / velocity, IMU-only velocity, attitude, ToF
-#   window "3D position": the camera path (cyan: x / y from the derotated flow, z = ToF height),
-#     the IMU-only path (orange, for comparison - it drifts), the drone now (red, line = heading)
+#   window "3D position": the FUSED path (green, the Kalman filters), the camera path (cyan: x / y
+#     from the derotated flow, z = ToF height), the IMU-only path (orange, it drifts), the drone
+#     now (red, on the fused path, line = heading)
 #   window "IMU": the last 10 s of the accelerometer (body axes, g, gravity included), the
-#     attitude from the gyro (roll / pitch / yaw, deg) and the camera position (world, m)
+#     attitude from the gyro (roll / pitch / yaw, deg), and velocity + position from the camera
+#     (solid) against the IMU alone (dashed): the gap is how far the IMU has drifted
+#   window "Fusion": fused position and velocity (solid) against the camera (dashed); the
+#     filters' innovations divided by their std (should stay mostly within +-1, rarely past +-3:
+#     NIS = mean of their squares should be ~1 - much more: a noise value is too small, much less:
+#     too big); the accelerometer bias the filters found, and the noise of the IMU / ToF now
 #   q = quit, c = clear the paths, a / d = turn the 3D view, w / x = tilt it, t = top view,
 #   s = save the current frame as PNG into ./frames, p = sanity lines in the terminal on / off
 # Sanity check: one line per frame with every step from the flow to the position, printed and
@@ -28,8 +34,9 @@ from frame_receiver import (PKT_FLOW, PKT_FRAME, PKT_LOG, FlowView, decode_flow,
                             decode_frame, find_port, parse_packets)
 
 PKT_SENSORS = 13                                  # same as msg::PKT_SENSORS
-SENSORS = struct.Struct("<3IB22f")                # msg::SensorState (101 bytes)
-SENS_CAM_VALID, SENS_IMU_READY, SENS_TOF_VALID = 1, 2, 4
+SENSORS = struct.Struct("<3IB49f2b2H")            # msg::SensorState (215 bytes)
+SENS_CAM_VALID, SENS_IMU_READY, SENS_TOF_VALID, SENS_STILL = 1, 2, 4, 8
+FIX_NAMES = ("TRACK", "COAST", "LOST")             # sensors::Fix, flags bits 4-5 (camera) / 6-7 (ToF)
 
 PATH_LEN = 6000                                   # points kept per path (~3 min at 30 Hz)
 VIEW_PX = 560                                     # 3D window size
@@ -39,13 +46,20 @@ IMU_SECONDS = 10                                  # time shown in the IMU window
 
 def decode_sensors(payload):
     """PKT_SENSORS payload -> dict."""
+    v = SENSORS.unpack_from(payload)
     (t, cam_us, seq, flags, cx, cy, cz, cvx, cvy, ix, iy, ivx, ivy,
-     roll, pitch, yaw, rng, ax, ay, az, rx, ry, rz, dz, vxc, vyc) = SENSORS.unpack_from(payload)
+     roll, pitch, yaw, rng, ax, ay, az, rx, ry, rz, dz, vxc, vyc) = v[:26]
+    f = v[26:]                                    # the fused part
     return dict(t=t, cam_us=cam_us, seq=seq, cam_valid=bool(flags & SENS_CAM_VALID),
                 imu_ready=bool(flags & SENS_IMU_READY), tof_valid=bool(flags & SENS_TOF_VALID),
                 cam=(cx, cy, cz), cam_v=(cvx, cvy), imu=(ix, iy), imu_v=(ivx, ivy),
                 roll=roll, pitch=pitch, yaw=yaw, range=rng, acc=(ax, ay, az),
-                rot=(rx, ry, rz), dz=dz, cam_v_cam=(vxc, vyc))
+                rot=(rx, ry, rz), dz=dz, cam_v_cam=(vxc, vyc),
+                fus=f[0:3], fus_v=f[3:6], std=f[6:9], std_v=f[9:12], bias=f[12:15], acc_w=f[15:18],
+                height=f[18], cam_innov=f[19:21], cam_innov_std=f[21:23], tof_innov=f[23],
+                tof_innov_std=f[24], cam_std=f[25], tof_std=f[26], cam_result=f[27], tof_result=f[28],
+                cam_forced=f[29], tof_steps=f[30], still=bool(flags & SENS_STILL),
+                hfix=FIX_NAMES[min(2, (flags >> 4) & 3)], vfix=FIX_NAMES[min(2, (flags >> 6) & 3)])
 
 
 SANITY_HEADER = ("# per frame: seq | dt = frame pair time, Z = ToF range, dZ = range change over the pair\n"
@@ -53,7 +67,13 @@ SANITY_HEADER = ("# per frame: seq | dt = frame pair time, Z = ToF range, dZ = r
                  "#   rot = gyro rotation over the pair, camera axes, deg | rotflow = what that rotation\n"
                  "#   moves the centre by, px (-fx*rot_y, fy*rot_x) | trans = flow - rotflow, px\n"
                  "#   v(tx) = -trans/f * Z/dt (check, from the centre only) | v cam = estimateVelocity,\n"
-                 "#   camera axes | v world | pos = camera position, h = height | rpy = attitude, deg | acc, g")
+                 "#   camera axes | v world | pos = camera position, h = height | rpy = attitude, deg | acc, g\n"
+                 "#   TRACK/COAST/LOST = camera / ToF state (measuring / missing a moment: IMU alone /\n"
+                 "#   missing long: velocity pulled to 0), STILL = IMU sees no motion (velocity 0 if not tracking)\n"
+                 "#   FUSED pos / v = the Kalman filters' output, +- = their 1 std | cam in = camera velocity\n"
+                 "#   innovation (measured - predicted) / its std, then ok / REFUSED (outlier) / LATE / RESET |\n"
+                 "#   tof in = ToF height innovation, mm (/ its std), ok / REFUSED / STEP (floor step) / RESET |\n"
+                 "#   bias = accelerometer bias found, m/s^2")
 
 
 def sanity_line(s, flow):
@@ -81,7 +101,27 @@ def sanity_line(s, flow):
             f" | rpy ({math.degrees(s['roll']):+6.1f} {math.degrees(s['pitch']):+6.1f} "
             f"{(math.degrees(s['yaw']) + 180) % 360 - 180:+6.1f})"
             f" | acc ({s['acc'][0]:+.2f} {s['acc'][1]:+.2f} {s['acc'][2]:+.2f})"
-            f" | {'CAM ok' if s['cam_valid'] else 'cam NOT valid'}{'' if s['tof_valid'] else ' tof NOT valid'}")
+            f" | {'CAM ok' if s['cam_valid'] else 'cam NOT valid'}{'' if s['tof_valid'] else ' tof NOT valid'}"
+            + fused_text(s))
+
+
+def _ratio(innov, std):
+    return innov / std if std > 0 else 0.0
+
+
+def fused_text(s):
+    """The filters' part of the sanity line."""
+    fx, fy, fz = s["fus"]
+    sx, sy, sz = s["std"]
+    cam = {2: "ok", 0: "REFUSED", -1: "LATE", 3: "RESET"}.get(s["cam_result"], "?")
+    tof = {1: "ok", 0: "REFUSED", -1: "LATE", 2: "STEP", 3: "RESET"}.get(s["tof_result"], "?")
+    return (f" | {s['hfix']}/{s['vfix']}{' STILL' if s['still'] else ''}"
+            f" | FUSED pos ({fx:+.3f} {fy:+.3f} {fz:.3f}) +-({sx:.3f} {sy:.3f} {sz:.3f})"
+            f" v ({s['fus_v'][0]:+.3f} {s['fus_v'][1]:+.3f} {s['fus_v'][2]:+.3f})"
+            f" | cam in ({_ratio(s['cam_innov'][0], s['cam_innov_std'][0]):+5.1f}"
+            f" {_ratio(s['cam_innov'][1], s['cam_innov_std'][1]):+5.1f})sd {cam}"
+            f" | tof in {s['tof_innov'] * 1000:+5.1f}mm ({_ratio(s['tof_innov'], s['tof_innov_std']):+5.1f}sd) {tof}"
+            f" | bias ({s['bias'][0]:+.3f} {s['bias'][1]:+.3f} {s['bias'][2]:+.3f})")
 
 
 class PoseView:
@@ -97,6 +137,7 @@ class PoseView:
         self.ax = self.fig.add_subplot(projection="3d")
         self.cam = deque(maxlen=PATH_LEN)             # (x, y, z) camera position
         self.imu = deque(maxlen=PATH_LEN)             # (x, y, z) IMU-only position, z from the ToF
+        self.fus = deque(maxlen=PATH_LEN)             # (x, y, z) fused position
         self.state = None
         self.last_rx = 0.0
         self.elev, self.azim = 25.0, -60.0
@@ -104,10 +145,13 @@ class PoseView:
     def clear(self):
         self.cam.clear()
         self.imu.clear()
+        self.fus.clear()
 
     def add(self, s):
         self.state = s
         self.last_rx = time.time()
+        if s["imu_ready"]:
+            self.fus.append(s["fus"])
         if s["cam_valid"]:
             self.cam.append(s["cam"])
             self.imu.append((s["imu"][0], s["imu"][1], s["cam"][2]))
@@ -118,11 +162,13 @@ class PoseView:
         ax.clear()
         cam = np.array(self.cam) if self.cam else np.zeros((1, 3))
         imu = np.array(self.imu) if self.imu else np.zeros((1, 3))
+        fus = np.array(self.fus) if self.fus else np.zeros((1, 3))
 
-        # same metres on x and y: a square around the camera path (at least 1 m)
-        lo, hi = cam[:, :2].min(axis=0), cam[:, :2].max(axis=0)
+        # same metres on x and y: a square around the fused and camera paths (at least 1 m)
+        both = np.vstack([cam, fus])
+        lo, hi = both[:, :2].min(axis=0), both[:, :2].max(axis=0)
         mid, span = (lo + hi) / 2, max(1.0, float((hi - lo).max()) * 1.3)
-        top = max(0.6, float(cam[:, 2].max()) * 1.2)
+        top = max(0.6, float(both[:, 2].max()) * 1.2)
         ax.set_xlim(mid[0] - span / 2, mid[0] + span / 2)
         ax.set_ylim(mid[1] - span / 2, mid[1] + span / 2)
         ax.set_zlim(0, top)
@@ -136,16 +182,18 @@ class PoseView:
         if len(self.imu) > 1:
             ax.plot(imu[:, 0], imu[:, 1], imu[:, 2], color="orange", lw=1, alpha=0.7, label="IMU only")
         if len(self.cam) > 1:
-            ax.plot(cam[:, 0], cam[:, 1], cam[:, 2], color="c", lw=2, label="camera")
-            ax.plot(cam[:, 0], cam[:, 1], 0 * cam[:, 2], color="0.75", lw=1)   # shadow on the floor
-        if self.cam and self.state is not None:
-            x, y, z = cam[-1]
+            ax.plot(cam[:, 0], cam[:, 1], cam[:, 2], color="c", lw=1, label="camera")
+        if len(self.fus) > 1:
+            ax.plot(fus[:, 0], fus[:, 1], fus[:, 2], color="g", lw=2, label="fused")
+            ax.plot(fus[:, 0], fus[:, 1], 0 * fus[:, 2], color="0.75", lw=1)   # shadow on the floor
+        if self.fus and self.state is not None:
+            x, y, z = fus[-1]
             ax.scatter([x], [y], [z], c="r", s=40)
             ax.plot([x, x], [y, y], [0, z], color="r", lw=0.8, ls=":")      # height line
             yaw, k = self.state["yaw"], span * 0.12
             ax.plot([x, x + k * math.cos(yaw)], [y, y + k * math.sin(yaw)], [z, z], color="r", lw=2)
-            ax.set_title(f"camera ({x:+.2f}, {y:+.2f}, {z:.2f}) m", fontsize=10)
-        if len(self.cam) > 1:
+            ax.set_title(f"fused ({x:+.2f}, {y:+.2f}, {z:.2f}) m", fontsize=10)
+        if len(self.cam) > 1 or len(self.fus) > 1:
             ax.legend(loc="upper left", fontsize=8)
 
         self.canvas.draw()
@@ -164,28 +212,32 @@ class PoseView:
                  f"vel camera ({s['cam_v'][0]:+.2f}, {s['cam_v'][1]:+.2f})  imu ({s['imu_v'][0]:+.2f}, "
                  f"{s['imu_v'][1]:+.2f}) m/s",
                  f"roll {math.degrees(s['roll']):+.1f}  pitch {math.degrees(s['pitch']):+.1f}  "
-                 f"yaw {(math.degrees(s['yaw']) + 180) % 360 - 180:+.1f} deg"]
+                 f"yaw {(math.degrees(s['yaw']) + 180) % 360 - 180:+.1f} deg",
+                 f"FUSED [{s['hfix']}/{s['vfix']}{' STILL' if s['still'] else ''}] "
+                 f"({s['fus'][0]:+.2f}, {s['fus'][1]:+.2f}, {s['fus'][2]:.3f}) m  "
+                 f"v ({s['fus_v'][0]:+.2f}, {s['fus_v'][1]:+.2f}, {s['fus_v'][2]:+.2f}) m/s"]
         return lines
 
 
 class ImuPlot:
-    """Scrolling plots of the accelerometer (body axes, g), the attitude (deg) and the camera
-    position (world, m), drawn with OpenCV."""
+    """Scrolling plots, drawn with OpenCV: the accelerometer (body axes, g), the attitude (deg),
+    and the velocity and position from the camera (solid) against the IMU alone (dashed),
+    world axes - the gap between them is how far the IMU has drifted."""
 
-    W, H = 640, 200                                  # one plot
-    COLOURS = [(0, 0, 230), (0, 160, 0), (230, 90, 0)]   # BGR: x / roll red, y / pitch green, z / yaw blue
+    W, H = 640, 180                                  # one plot
+    RED, GREEN, BLUE = (0, 0, 230), (0, 160, 0), (230, 90, 0)          # BGR
+    ORANGE, OLIVE = (0, 140, 255), (40, 130, 110)
 
     def __init__(self):
         self.t = deque()                             # board time, s
         self.acc = deque()                           # (x, y, z), g
         self.att = deque()                           # (roll, pitch, yaw), deg
-        self.pos = deque()                           # camera (x, y, z), m
+        self.vel = deque()                           # (camera vx, vy, IMU vx, vy), m/s
+        self.pos = deque()                           # (camera x, y, height, IMU x, y), m
 
     def clear(self):
-        self.t.clear()
-        self.acc.clear()
-        self.att.clear()
-        self.pos.clear()
+        for d in (self.t, self.acc, self.att, self.vel, self.pos):
+            d.clear()
 
     def add(self, s):
         t = s["t"] / 1e6
@@ -194,14 +246,14 @@ class ImuPlot:
         self.t.append(t)
         self.acc.append(s["acc"])
         self.att.append(tuple((math.degrees(v) + 180) % 360 - 180 for v in (s["roll"], s["pitch"], s["yaw"])))
-        self.pos.append(s["cam"])                    # holds its last value while the camera is not valid
+        self.vel.append((s["cam_v"][0], s["cam_v"][1], s["imu_v"][0], s["imu_v"][1]))
+        cx, cy, cz = s["cam"]                        # camera: holds its last value while not valid
+        self.pos.append((cx, cy, cz, s["imu"][0], s["imu"][1]))
         while self.t[-1] - self.t[0] > IMU_SECONDS:
-            self.t.popleft()
-            self.acc.popleft()
-            self.att.popleft()
-            self.pos.popleft()
+            for d in (self.t, self.acc, self.att, self.vel, self.pos):
+                d.popleft()
 
-    def _plot(self, title, values, names, unit, min_span, wrap=None):
+    def _plot(self, title, values, names, colours, unit, min_span, wrap=None, dashed=(), guides=()):
         import cv2
         img = np.full((self.H, self.W, 3), 255, np.uint8)
         L, R, T, B = 52, self.W - 150, 24, self.H - 22   # plot area; the legend sits right of R
@@ -211,7 +263,7 @@ class ImuPlot:
                         (140, 140, 140), 1, cv2.LINE_AA)
             return img
 
-        v = np.array(values)                         # rows: samples, columns: x / y / z
+        v = np.array(values)                         # rows: samples, columns: the lines
         lo, hi = float(v.min()), float(v.max())
         if hi - lo < min_span:                       # at least min_span tall, centred on the data
             mid = (hi + lo) / 2
@@ -232,28 +284,114 @@ class ImuPlot:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1, cv2.LINE_AA)
         if lo < 0 < hi:
             cv2.line(img, (L, px(now, 0)[1]), (R, px(now, 0)[1]), (190, 190, 190), 1)
+        for g in guides:                             # reference levels (e.g. +-1 std), dotted
+            if lo < g < hi:
+                yy = px(now, g)[1]
+                for x0 in range(L, R, 8):
+                    cv2.line(img, (x0, yy), (x0 + 3, yy), (150, 150, 150), 1)
         cv2.putText(img, f"-{IMU_SECONDS} s", (L, self.H - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
         cv2.putText(img, "now", (R - 24, self.H - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
 
-        for c in range(3):
-            seg = []
-            for i, (t, y) in enumerate(zip(self.t, v[:, c])):
-                if wrap and i and abs(y - v[i - 1, c]) > wrap:   # yaw jumps -180 <-> +180: no line across
-                    if len(seg) > 1:
-                        cv2.polylines(img, [np.array(seg, np.int32)], False, self.COLOURS[c], 1, cv2.LINE_AA)
-                    seg = []
-                seg.append(px(t, y))
-            if len(seg) > 1:
-                cv2.polylines(img, [np.array(seg, np.int32)], False, self.COLOURS[c], 1, cv2.LINE_AA)
-            cv2.putText(img, f"{names[c]} {v[-1, c]:+.2f} {unit}" if min_span < 10 else f"{names[c]} {v[-1, c]:+.1f} {unit}",
-                        (R + 8, T + 20 + 22 * c), cv2.FONT_HERSHEY_SIMPLEX, 0.45, self.COLOURS[c], 1, cv2.LINE_AA)
+        for c in range(v.shape[1]):
+            pts = [px(t, y) for t, y in zip(self.t, v[:, c])]
+            for i in range(1, len(pts)):
+                if wrap and abs(v[i, c] - v[i - 1, c]) > wrap:   # yaw jumps -180 <-> +180: no line across
+                    continue
+                if c in dashed and (i // 2) % 2:                 # dashed: every other pair of samples
+                    continue
+                cv2.line(img, pts[i - 1], pts[i], colours[c], 1, cv2.LINE_AA)
+            text = f"{names[c]} {v[-1, c]:+.2f} {unit}" if min_span < 10 else f"{names[c]} {v[-1, c]:+.1f} {unit}"
+            cv2.putText(img, text, (R + 8, T + 16 + 18 * c), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colours[c], 1, cv2.LINE_AA)
         return img
 
     def draw(self):
-        acc = self._plot("accelerometer, body axes (gravity included)", self.acc, "xyz", "g", 0.5)
-        att = self._plot("attitude from the gyro", self.att, ["roll", "pitch", "yaw"], "deg", 20, wrap=180)
-        pos = self._plot("camera position, world (z = ToF height)", self.pos, "xyz", "m", 0.2)
-        return np.vstack([acc, att, pos])
+        acc = self._plot("accelerometer, body axes (gravity included)", self.acc, "xyz",
+                         [self.RED, self.GREEN, self.BLUE], "g", 0.5)
+        att = self._plot("attitude from the gyro", self.att, ["roll", "pitch", "yaw"],
+                         [self.RED, self.GREEN, self.BLUE], "deg", 20, wrap=180)
+        vt = pt = ""
+        if self.t:
+            vx, vy, ivx, ivy = self.vel[-1]
+            x, y, _, ix, iy = self.pos[-1]
+            vt = f" - IMU off by {math.hypot(ivx - vx, ivy - vy):.2f} m/s"
+            pt = f" - IMU off by {math.hypot(ix - x, iy - y):.2f} m"
+        vel = self._plot("velocity, world: camera (solid) vs IMU alone (dashed)" + vt, self.vel,
+                         ["cam x", "cam y", "imu x", "imu y"], [self.RED, self.GREEN, self.ORANGE, self.OLIVE],
+                         "m/s", 0.2, dashed=(2, 3))
+        pos = self._plot("position, world: camera (solid) vs IMU alone (dashed)" + pt, self.pos,
+                         ["cam x", "cam y", "height", "imu x", "imu y"],
+                         [self.RED, self.GREEN, self.BLUE, self.ORANGE, self.OLIVE], "m", 0.2, dashed=(3, 4))
+        return np.vstack([acc, att, vel, pos])
+
+
+class FusionPlot(ImuPlot):
+    """Scrolling plots of the filters: fused position / velocity (solid) against the camera
+    (dashed), the innovations / their std, the bias found and the sensor noise now."""
+
+    MAGENTA = (200, 0, 200)
+    NOISE_S = 1.0                                    # live noise: std over the last second
+
+    def __init__(self):
+        super().__init__()
+        self.fpos = deque()                          # (x, y, z fused, camera x, y, height)
+        self.fvel = deque()                          # (vx, vy, vz fused, camera vx, vy)
+        self.innov = deque()                         # (camera x, y, ToF) innovation / std
+        self.bias = deque()                          # (x, y, z), m/s^2
+        self.raw = deque()                           # (acc world x, y, z, ToF height): for the noise
+        self.last = None
+
+    def _all(self):
+        return (self.t, self.fpos, self.fvel, self.innov, self.bias, self.raw)
+
+    def clear(self):
+        for d in self._all():
+            d.clear()
+
+    def add(self, s):
+        t = s["t"] / 1e6
+        if self.t and t < self.t[-1] - 1:            # the board restarted (or its clock wrapped)
+            self.clear()
+        self.last = s
+        self.t.append(t)
+        self.fpos.append(tuple(s["fus"]) + tuple(s["cam"]))
+        self.fvel.append(tuple(s["fus_v"]) + tuple(s["cam_v"]))
+        cam_ok = s["cam_valid"] and s["cam_result"] >= 0
+        self.innov.append((_ratio(s["cam_innov"][0], s["cam_innov_std"][0]) if cam_ok else 0.0,
+                           _ratio(s["cam_innov"][1], s["cam_innov_std"][1]) if cam_ok else 0.0,
+                           _ratio(s["tof_innov"], s["tof_innov_std"])))
+        self.bias.append(tuple(s["bias"]))
+        self.raw.append(tuple(s["acc_w"]) + (s["height"],))
+        while self.t[-1] - self.t[0] > IMU_SECONDS:
+            for d in self._all():
+                d.popleft()
+
+    def draw(self):
+        pt = vt = it = bt = ""
+        if self.t:
+            s = self.last
+            pt = f" - std ({s['std'][0] * 100:.1f} {s['std'][1] * 100:.1f} {s['std'][2] * 100:.1f}) cm"
+            vt = f" - std ({s['std_v'][0] * 1000:.0f} {s['std_v'][1] * 1000:.0f} {s['std_v'][2] * 1000:.0f}) mm/s"
+            nis = (np.array(self.innov) ** 2).mean(axis=0)
+            it = (f" - NIS cam ({nis[0]:.1f} {nis[1]:.1f}) tof {nis[2]:.1f} (want ~1),"
+                  f" {s['hfix']}/{s['vfix']}{' STILL' if s['still'] else ''}")
+            n = sum(1 for t in self.t if t > self.t[-1] - self.NOISE_S)
+            r = np.array(list(self.raw)[-n:])
+            if len(r) > 2:                           # meaningful while the board lies still
+                sd = r.std(axis=0)
+                bt = (f" - noise {self.NOISE_S:.0f} s: acc ({sd[0] / 9.81e-3:.0f} {sd[1] / 9.81e-3:.0f}"
+                      f" {sd[2] / 9.81e-3:.0f}) mg, tof {sd[3] * 1000:.1f} mm (given {s['tof_std'] * 1000:.1f})")
+        pos = self._plot("position: fused (solid) vs camera (dashed)" + pt, self.fpos,
+                         ["x", "y", "z", "cam x", "cam y", "cam h"],
+                         [self.RED, self.GREEN, self.BLUE, self.ORANGE, self.OLIVE, self.MAGENTA], "m", 0.2,
+                         dashed=(3, 4, 5))
+        vel = self._plot("velocity: fused (solid) vs camera (dashed)" + vt, self.fvel,
+                         ["vx", "vy", "vz", "cam vx", "cam vy"],
+                         [self.RED, self.GREEN, self.BLUE, self.ORANGE, self.OLIVE], "m/s", 0.2, dashed=(3, 4))
+        inn = self._plot("innovation / std" + it, self.innov, ["cam x", "cam y", "tof"],
+                         [self.RED, self.GREEN, self.BLUE], "sd", 6.5, guides=(-3, -1, 1, 3))
+        bia = self._plot("acc bias found, m/s^2" + bt, self.bias, ["x body", "y body", "z"],
+                         [self.RED, self.GREEN, self.BLUE], "", 0.1)
+        return np.vstack([pos, vel, inn, bia])
 
 
 def put_lines(img, lines, y0):
@@ -278,6 +416,8 @@ class App:
         self.imu_plot = ImuPlot()
         self.view_imu = None
         self.last_imu = 0.0
+        self.fusion_plot = FusionPlot()
+        self.view_fusion = None
         self.sanity = []                              # new sanity lines, taken by main()
 
     def handle(self, ptype, payload):
@@ -297,6 +437,7 @@ class App:
             s = decode_sensors(payload)
             self.pose.add(s)
             self.imu_plot.add(s)
+            self.fusion_plot.add(s)
             self.sanity.append(sanity_line(s, self.flows.get(s["seq"])))
 
     def camera_view(self):
@@ -322,8 +463,14 @@ class App:
     def imu_view(self, force=False):
         if force or self.view_imu is None or time.time() - self.last_imu > 0.05:   # OpenCV: cheap
             self.view_imu = self.imu_plot.draw()
+            self.view_fusion = self.fusion_plot.draw()
             self.last_imu = time.time()
         return self.view_imu
+
+    def fusion_view(self):                           # drawn together with the IMU plots
+        if self.view_fusion is None:
+            self.imu_view(force=True)
+        return self.view_fusion
 
 
 def start_reader(ser):
@@ -403,6 +550,7 @@ def main():
             cv2.imshow("Nicla camera + flow", view)
         cv2.imshow("3D position", app.view_3d())
         cv2.imshow("IMU", app.imu_view())
+        cv2.imshow("Fusion", app.fusion_view())
 
         key = cv2.waitKey(5) & 0xFF                  # 5 ms: the reader thread does the waiting
         if key == ord("q"):
@@ -414,6 +562,7 @@ def main():
             app.flow_view.clear()
             app.pose.clear()
             app.imu_plot.clear()
+            app.fusion_plot.clear()
         if key in (ord("a"), ord("d")):
             app.pose.azim += 15 if key == ord("a") else -15
             app.view_3d(force=True)

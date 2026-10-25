@@ -11,10 +11,22 @@
 //   sens.startup();                            // drone still: gyro bias + world frame
 //   loop:
 //     if (flow packet arrived) sens.update(&flow, pts, n);  else sens.update();
-//     sens.imuVelocity(); sens.cameraVelocity(); sens.attitude(); ...
+//     sens.pose();  sens.position();  sens.velocity();          // fused
+//     sens.imuVelocity(); sens.cameraVelocity(); sens.gyroPosition(); ...   // each source alone
 //
-// Each source keeps its own estimate (for comparing them); combining them is the job of the
-// filter in M4/FILTERS. No heap memory, nothing to free.
+// Fusion (M4/FILTERS/KF.h): two Kalman filters, both predicted with every IMU sample:
+//   horizontal: IMU acc x / y + camera velocity -> x, y, vx, vy (+ accelerometer bias)
+//   vertical:   IMU acc z + ToF height          -> z, vz (+ bias)
+// The camera (~70 ms late) and the ToF (~15 ms late) are applied at their own time.
+//
+// A small state machine per filter (Fix) decides what to do when its measurement is missing:
+//   TRACKING  measurements arrive: the estimate is good
+//   COASTING  none for a moment (camera blurred by a fast turn, ToF out of range): IMU alone,
+//             it drifts (quadratically in position)
+//   LOST      none for long: the velocity is pulled weakly to 0 (left alone it only runs away),
+//             position / height just hold. The first measurement back is taken as it is.
+// Still on the table (IMU: no rotation, exactly 1 g) without a measurement: velocity = 0.
+// Each source also keeps its own estimate, for comparing. No heap memory, nothing to free.
 
 #pragma once
 
@@ -23,6 +35,7 @@
 #include "IMU.h"
 #include "ToF.h"
 #include "../visula/headers/visulaVel.h"
+#include "../../FILTERS/headers/KF.h"
 #include "../../../shared/headers/messages.h"
 
 namespace sensors {
@@ -40,6 +53,48 @@ struct SensorsConfig {
   // The ToF beam is taken along camera z.
   uint8_t camAxis[3] = {1, 0, 2};
   int8_t  camSign[3] = {1, 1, -1};
+
+  // --- fusion ---
+  filters::HorizontalConfig horizontal;
+  filters::VerticalConfig   vertical;
+  // How much a measurement is trusted (1 std). Still on the bench (sanity logs): camera
+  // velocity 4..10 mm/s, ToF 1.4..1.5 mm. Camera: per point rmsPx * Z / (f dt), averaged over
+  // the inliers, plus a floor and a share of the speed (height / derotation errors scale it).
+  float camStdFloor = 0.008f;    // m/s
+  float camStdScale = 0.05f;     // share of the speed
+  float camMinPx    = 0.3f;      // smallest per-point error used, pixels
+  float tofStd      = 0.002f;    // m: the sensor (1.5 mm) + floor texture (3 mm + 0.5%: ToF NIS 0.12)
+  float tofStdRange = 0.002f;    // share of the range (grows with distance)
+  float camStdRot   = 0.05f;     // + this share of the velocity the rotation alone would fake
+                                 // (|rot| * Z / dt): derotation is never exact
+  float tofMaxTiltDeg = 40.0f;   // ToF not used while tilted more (the beam hits walls, edges)
+
+  // how much worse the IMU is while moving hard (attitude errors leak gravity, lever arms):
+  // the filters' noise is accNoise * k, k = 1 + |gyro| / kRateRadS + | |acc| - 1 g | / kAccG
+  float kRateRadS = 0.5f;
+  float kAccG     = 0.1f;
+
+  // --- state machine (see the top) ---
+  float camCoastS  = 0.15f;      // no camera velocity this long: COASTING (3 frames)
+  float camLostS   = 1.0f;       // ...this long: LOST
+  float tofCoastS  = 0.1f;       // no ToF height this long: COASTING
+  float tofLostS   = 0.5f;       // ...this long: LOST
+  float lostVelStd = 0.3f;       // LOST: velocity = 0 +- this, 20 times a second
+  // still: |gyro| < stillDps and |acc| within 1 g +- stillG, for stillS. Without a measurement
+  // the velocity is then 0 +- stillVelStd. A flying drone is never this calm (vibration);
+  // turn off (useStill) if that ever turns out wrong.
+  bool  useStill    = true;
+  float stillDps    = 3.0f;
+  float stillG      = 0.03f;
+  float stillS      = 0.3f;
+  float stillVelStd = 0.02f;
+};
+
+// What a filter's measurement does right now (the state machine, see the top).
+enum class Fix : uint8_t { TRACKING = 0, COASTING = 1, LOST = 2 };
+
+struct Pose {                    // the fused output: world frame, m and rad
+  float x = 0.0f, y = 0.0f, z = 0.0f, yaw = 0.0f;   // z = height above the floor
 };
 
 class Sensors {
@@ -57,6 +112,31 @@ class Sensors {
   // Every loop. flow = the newest flow packet from the M7, or nullptr when none arrived.
   // Returns NEW_* flags of what was new this time.
   uint8_t update(const msg::FlowHeader* flow = nullptr, const msg::PointMsg* pts = nullptr, int n = 0);
+
+  // --- fused (world frame) ---
+  Pose     pose() const;                                         // x, y, z, yaw
+  Vec3     position() const;                                     // m
+  Vec3     velocity() const;                                     // m/s
+  float    yaw() const { return imu_.attitude().yaw; }           // rad (gyro only: drifts slowly)
+  Vec3     positionStd() const;                                  // 1 std, m: how sure the filters are
+  Vec3     velocityStd() const;                                  // 1 std, m/s
+  Vec3     accBias() const;                                      // accelerometer bias found, m/s^2 (x / y body, z world)
+  Fix      horizontalFix() const { return hFix_; }               // camera: TRACKING / COASTING / LOST
+  Fix      verticalFix() const { return vFix_; }                 // ToF
+  bool     still() const { return still_; }                      // the IMU says: not moving at all
+  float    noiseScale() const { return k_; }                     // the k given to the filters now
+  const filters::HorizontalKF& horizontal() const { return hkf_; }   // innovations, counters
+  const filters::VerticalKF&   vertical() const { return vkf_; }
+
+  // What the last camera / ToF update of the filters was, for checking the noise values: the
+  // innovation (measured - predicted) should mostly stay within +-innovationStd.
+  struct FusionDebug {
+    float   camStd = 0.0f, tofStd = 0.0f;          // the std given to the filter
+    int8_t  camResult = 0, tofResult = 0;          // the update's return: >0 applied, 0 refused,
+                                                   // -1 too old, 3 reset (first one after LOST)
+    uint32_t camUs = 0, tofUs = 0;                 // measurement times
+  };
+  const FusionDebug& fusionDebug() const { return fusDbg_; }
 
   // --- IMU (world frame) ---
   Vec3     imuPosition() const { return imuPos_; }               // m, x / y: drifts within seconds alone
@@ -91,6 +171,7 @@ class Sensors {
 
  private:
   void addGyro(const ImuSample& s);                               // into the gyro history
+  void updateFix(uint32_t nowUs);                                 // the state machine + its made-up measurements
   bool rotationBetween(uint32_t t0Us, uint32_t t1Us, Vec3& out) const;   // body, rad; false: not in the history
   bool rangeRate(float& out);                                     // ToF trend, m/s (linReg); false: too few readings
   Vec3 toCamera(const Vec3& body) const;                          // body axes -> camera axes
@@ -121,6 +202,16 @@ class Sensors {
   uint32_t camUs_     = 0;
   bool     camValid_  = false;
   CameraDebug camDbg_;
+
+  filters::HorizontalKF hkf_;
+  filters::VerticalKF   vkf_;
+  FusionDebug           fusDbg_;
+  Fix      hFix_ = Fix::TRACKING, vFix_ = Fix::TRACKING;
+  uint32_t camSeenUs_ = 0, tofSeenUs_ = 0;    // last valid camera velocity (tMid) / ToF height
+  uint32_t pseudoUs_  = 0;                    // last made-up measurement (LOST / still)
+  bool     still_     = false;
+  float    stillForS_ = 0.0f;                 // how long the IMU has looked still
+  float    k_         = 1.0f;
 };
 
 }  // namespace sensors
