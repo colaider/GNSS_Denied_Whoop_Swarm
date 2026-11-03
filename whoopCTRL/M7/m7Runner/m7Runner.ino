@@ -11,6 +11,8 @@
 //         Flash split: "1MB M7 + 1MB M4" (the same split as the M4 sketch, or the M4 won't start).
 // The M7 starts the M4 in setup(). Without an M4 program it waits 5 s, says so and goes on.
 // View on the PC with M7/test/frame_receiver.py (close Serial Monitor first).
+// PC_WIFI 1: the PC link is WiFi (UDP, e.g. M4/test/hoverTest/hoverTest.py), images as row slices
+// (PKT_FRAME_ROWS, one datagram each); the Nicla's address is printed on the USB serial port at start.
 
 #ifndef CORE_CM7
 #error "Set Tools > Target core: Main Core (M7)"
@@ -19,12 +21,21 @@
 #include "camera.h"    // listed here so the Arduino IDE finds the Camera + GC2145 libraries
 #include "gc2145.h"
 #include <RPC.h>       // and the RPC library (used by CoreLink)
+#include <WiFi.h>
+
+// ---- link to the PC ----
+#define PC_WIFI    1                   // 1: WiFi, 0: USB
+#define WIFI_AP    0                   // 1: own network (PC joins it, Nicla = 192.168.3.1), 0: join WIFI_SSID
+#define WIFI_SSID  "Penturas (2)"
+#define WIFI_PASS  "penturas3"         // at least 8 characters
+#define WIFI_PORT  4210                // UDP
 
 // The IDE only compiles this sketch folder, so the project code is included by absolute path.
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/shared/sharedClock.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/shared/communication/communication.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/shared/communication/coreLink.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/COMM/usbLink.cpp"
+#include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/COMM/wifiLink.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/cmeraReader.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/frameCapture.cpp"
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/dcmiCapture.cpp"
@@ -35,15 +46,17 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/replenish.cpp"
 
 // ---- debug stream to the PC ----
-const uint32_t FRAME_EVERY  = 3;       // send the image every N frames (0 = never). 10 KB over USB per
-                                       // image: every frame made the loop miss the next one (21 -> 10 fps)
+const uint32_t FRAME_EVERY  = PC_WIFI ? 1 : 3;   // send the image every N frames (0 = never). 10 KB over USB per
+                                       // image: every frame made the loop miss the next one (21 -> 10 fps).
+                                       // WiFi: one slice per loop, the next image when the last one is out
 const bool     SEND_POINTS  = true;    // flow to the PC with its tracked points
 const uint32_t STATS_EVERY_MS = 5000;  // a status line to the PC
 
 // ---- objects (globals: they hold image buffers and pyramids) ----
 comm::UsbLink         usb;
+comm::WifiLink        wifi(WIFI_SSID, WIFI_PASS, WIFI_AP, WIFI_PORT);
 comm::CoreLink        core;
-comm::Communication   pc;              // USB to the laptop (later: "wifi")
+comm::Communication   pc;              // the laptop: USB or WiFi (PC_WIFI)
 comm::Communication   m4;              // the M4 core
 vision::CameraReader  camera;
 vision::FlowEstimator flow;
@@ -56,8 +69,7 @@ uint32_t routedToM4 = 0, routedToPc = 0, frames = 0, flowUsSum = 0;
 // where a frame's time goes (sums over the stats period, microseconds)
 uint32_t grabSum = 0, pyramidSum = 0, trackSum = 0, ransacSum = 0, replenishSum = 0, sendSum = 0, searchSum = 0;
 
-void logLine(const char* fmt, unsigned long a = 0, unsigned long b = 0, unsigned long c = 0, unsigned long d = 0,
-             unsigned long e = 0, unsigned long g = 0) {
+void logLine(const char* fmt, unsigned long a = 0, unsigned long b = 0, unsigned long c = 0, unsigned long d = 0, unsigned long e = 0, unsigned long g = 0) {
   char line[160];
   snprintf(line, sizeof(line), fmt, a, b, c, d, e, g);
   pc.log(line);
@@ -98,7 +110,28 @@ void sendFlow(uint32_t flowUs) {
   pc.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, SEND_POINTS ? pointBytes : 0);
 }
 
+// WiFi: the image is copied and sent one slice (one datagram) per loop. A burst of all
+// slices got dropped (WiFi chip / PC receive buffer): only the first rows arrived.
+uint8_t  sliceImg[vision::MAX_CROP_W * vision::MAX_CROP_H];
+uint32_t sliceSeq = 0;
+uint16_t sliceW = 0, sliceH = 0, sliceRow = 0;
+
+void sendSlice() {
+  if (sliceRow >= sliceH) return;
+  const int rows = (comm::WifiLink::MAX_DATAGRAM - 9 - sizeof(msg::FrameRows)) / sliceW;   // 9: packet frame
+  const int n = sliceRow + rows <= sliceH ? rows : sliceH - sliceRow;
+  const msg::FrameRows h = {sliceSeq, sliceW, sliceH, sliceRow, (uint8_t)n};
+  pc.send(msg::PKT_FRAME_ROWS, &h, sizeof(h), sliceImg + sliceRow * sliceW, (uint32_t)n * sliceW);
+  sliceRow += n;
+}
+
 void sendFrame(const vision::Frame& f) {
+  if (PC_WIFI) {
+    if (sliceRow < sliceH) return;             // the last image is still going out
+    memcpy(sliceImg, f.data, (uint32_t)f.width * f.height);
+    sliceSeq = f.seq;  sliceW = f.width;  sliceH = f.height;  sliceRow = 0;
+    return;
+  }
   const vision::CameraStats& s = camera.stats();
   const calib::CameraIntrinsics& k = camera.cropIntrinsics();
   msg::FrameHeader h = {f.seq, f.tEndUs, s.lastGrabUs, s.lastProcessUs, s.grabErrors, f.width, f.height, k.fx, k.fy, k.cx, k.cy};
@@ -137,7 +170,17 @@ void sendStats() {
 void setup() {
   comm::addLink(usb);
   comm::addLink(core);
-  pc.begin("usb");
+  comm::addLink(wifi);
+  if (PC_WIFI) {
+    Serial.begin(115200);                      // plain text: where to find us
+    const bool ok = pc.begin("wifi");
+    Serial.print(ok ? "M7 runner: WiFi ok, address " : "M7 runner: WiFi FAILED, address ");
+    Serial.print(wifi.ip());
+    Serial.print(", UDP port ");
+    Serial.println(WIFI_PORT);
+  } else {
+    pc.begin("usb");
+  }
   pc.log("M7 runner starting");
 
   m4ok = m4.begin("core");                     // starts the M4, waits up to 5 s for it
@@ -163,10 +206,7 @@ void loop() {
   routeFromM4();
 
   vision::Frame f;
-  if (!camera.getFrame(f)) {
-    pc.log("grab failed");
-    return;
-  }
+  if (!camera.getFrame(f)) { pc.log("grab failed"); return; }
 
   const uint32_t t0 = shared::nowUs();
   flow.update({f.data, f.width, f.height}, f.seq, f.tUs);   // when the image was seen, for the M4's gyro
@@ -184,6 +224,7 @@ void loop() {
   const uint32_t t1 = shared::nowUs();
   sendFlow(flowUs);                            // M4 first: it is the one that flies
   if (FRAME_EVERY && f.seq % FRAME_EVERY == 0) sendFrame(f);
+  if (PC_WIFI) sendSlice();
   if (rawRequested) {                          // debug: the untouched Bayer image of this frame
     rawRequested = false;
     msg::RawHeader r = {f.seq, camera.rawWidth(), camera.rawHeight()};
@@ -191,6 +232,5 @@ void loop() {
   }
   sendSum += shared::nowUs() - t1;
 
-  routeFromM4();                               // again: the grab may have waited most of a frame
   sendStats();
 }

@@ -33,6 +33,20 @@ struct Vec3 {
   float x = 0.0f, y = 0.0f, z = 0.0f;
 };
 
+// Element by element: + - between vectors, * / by a number or by a vector (per-axis gains).
+inline Vec3 operator+(const Vec3& a, const Vec3& b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+inline Vec3 operator-(const Vec3& a, const Vec3& b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+inline Vec3 operator*(const Vec3& a, const Vec3& b) { return {a.x * b.x, a.y * b.y, a.z * b.z}; }
+inline Vec3 operator/(const Vec3& a, const Vec3& b) { return {a.x / b.x, a.y / b.y, a.z / b.z}; }
+inline Vec3 operator*(const Vec3& a, float k)       { return {a.x * k, a.y * k, a.z * k}; }
+inline Vec3 operator*(float k, const Vec3& a)       { return a * k; }
+inline Vec3 operator/(const Vec3& a, float k)       { return {a.x / k, a.y / k, a.z / k}; }
+inline Vec3 operator-(const Vec3& a)                { return {-a.x, -a.y, -a.z}; }
+inline Vec3& operator+=(Vec3& a, const Vec3& b)     { return a = a + b; }
+inline Vec3& operator-=(Vec3& a, const Vec3& b)     { return a = a - b; }
+inline Vec3& operator*=(Vec3& a, float k)           { return a = a * k; }
+inline Vec3& operator/=(Vec3& a, float k)           { return a = a / k; }
+
 struct Attitude {                  // body relative to the world frame, radians
   float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
 };

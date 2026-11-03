@@ -54,7 +54,7 @@ void logLine(const char* fmt, long a = 0, long b = 0, long c = 0, long d = 0, lo
 void sendState(uint32_t flowSeq) {
   const sensors::Vec3 cp = sens.cameraPosition(), cv = sens.cameraVelocity();
   const sensors::Vec3 ip = sens.imuPosition(), iv = sens.imuVelocity();
-  const sensors::Attitude a = sens.gyroPosition();
+  const sensors::Attitude a = sens.attitude();
   const sensors::ToFReading& tof = sens.tofReading();
   msg::SensorState s;
   s.tUs     = shared::nowUs();

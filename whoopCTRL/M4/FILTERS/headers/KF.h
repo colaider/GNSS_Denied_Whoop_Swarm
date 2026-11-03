@@ -42,10 +42,13 @@ struct HorizontalConfig {
 
 struct VerticalConfig {
   float accNoise  = 0.05f;       // as above, z; a tilt error barely changes z (cos). 0.1: ToF NIS 0.12
-  float biasWalk  = 0.002f;
+  // In flight vibration shifts the accelerometer by 1-4 m/s^2 (flight logs 31.10): the bias must
+  // follow within seconds. 0.002 learned 0.7 of 4 m/s^2 in 12 s; 0.1 learns it (simulated).
+  float biasWalk  = 0.1f;
   float biasInit  = 0.2f;
   float gate      = 5.0f;        // ToF height more than this many std off: refused
   int   forceAfter = 3;          // ...this many in a row: a step in the floor, height jumps to it
+  float stepVelStd = 0.5f;       // ...and vz restarts at 0 with this std, m/s
 };
 
 class HorizontalKF : public DelayedKF<6, 4, 96> {   // u = [ax, ay, yaw, k]; 96 steps = 230 ms back

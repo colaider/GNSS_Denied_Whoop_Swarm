@@ -9,7 +9,7 @@ FlowEstimator::FlowEstimator(const FlowConfig& cfg)
       gftt_(cfg.maxPoints, cfg.quality, cfg.minDistance),
       lk_(cfg.pyramidLevels, cfg.window, cfg.lkIterations),
       ransac_(cfg.ransacIters, cfg.inlierPx, cfg.minInliers),
-      rep_(gftt_, cfg.maxPoints, 2, 2, 2, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
+      rep_(gftt_, cfg.maxPoints, 2, 2, 3, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
 
 void FlowEstimator::begin(const calib::CameraIntrinsics& k) {
   cx_ = k.cx;

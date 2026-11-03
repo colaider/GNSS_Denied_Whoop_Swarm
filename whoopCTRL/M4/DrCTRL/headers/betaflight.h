@@ -37,17 +37,23 @@
 // or the angles / rates sent are not the ones flown. Throttle: linear with thr_mid / thr_expo off.
 //
 //   drone::Betaflight fc;                               // global
-//   fc.begin(writeToUart, nullptr);                     // how bytes go out
-//   loop: while (Serial1.available()) fc.receive(Serial1.read());
-//         fc.update(shared::nowUs());                   // RC frames, requests, timeouts
+//   fc.begin();                                         // opens the FC UART (BF_USE_USART1 below)
+//   loop: fc.update(shared::nowUs());                   // reads replies, RC frames, requests, timeouts
 //   fc.setMode(drone::FlightMode::ANGLE);  fc.arm();
 //   fc.setAttitude(2.0f, -1.0f, 0.0f, 0.35f);           // every control step (< commandTimeoutMs apart)
+//   fc.setMotor(0, 0.1f);                               // motor test: motor 1 at 1100 us (disarmed, props off)
+// Without the UART (PC tests): fc.begin(writeFn, ctx) and fc.receive(byte) for every byte read.
 //
 // No heap memory, nothing to free. Portable C++ (tested on the PC).
 
 #pragma once
 
 #include <stdint.h>
+
+// ---- the UART to the FC ----
+// On the M4, Serial1 does NOT reach J2 pins 3 / 4 (tested); USART1 on PA9 / PA10 does.
+#define BF_USE_USART1 1      // 1: begin() opens USART1, TX PA9 (J2 pin 3), RX PA10 (J2 pin 4), and update() reads it
+#define BF_BAUD       115200 // the FC's Ports tab speed for that UART
 
 namespace drone {
 
@@ -100,13 +106,18 @@ class Betaflight {
 
   explicit Betaflight(const BetaflightConfig& cfg = BetaflightConfig());
 
-  // How bytes reach the FC UART. Asks the FC who it is (API / variant / version / modes).
+#if defined(ARDUINO) && BF_USE_USART1
+  // Opens USART1 at BF_BAUD and talks through it (update() reads the replies). Asks the FC who it is.
+  void begin();
+#endif
+
+  // How bytes reach the FC UART (your own). Asks the FC who it is (API / variant / version / modes).
   void begin(WriteFn write, void* ctx);
 
-  // Every byte read from the FC UART.
+  // Every byte read from the FC UART (only with your own begin(write, ctx)).
   void receive(uint8_t b);
 
-  // Every loop: RC frames at rcRateHz, status requests, arm sequence, command / motor timeouts.
+  // Every loop: FC replies, RC frames at rcRateHz, status requests, arm sequence, command / motor timeouts.
   void update(uint32_t nowUs);
 
   // --- arming ---
@@ -168,6 +179,7 @@ class Betaflight {
   BetaflightConfig cfg_;
   WriteFn  write_ = nullptr;
   void*    ctx_   = nullptr;
+  bool     ownUart_ = false;                               // begin(): update() reads USART1 itself
   uint32_t now_   = 0;
 
   // commands

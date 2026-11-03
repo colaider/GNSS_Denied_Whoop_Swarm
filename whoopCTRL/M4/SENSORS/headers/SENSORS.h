@@ -11,8 +11,9 @@
 //   sens.startup();                            // drone still: gyro bias + world frame
 //   loop:
 //     if (flow packet arrived) sens.update(&flow, pts, n);  else sens.update();
-//     sens.pose();  sens.position();  sens.velocity();          // fused
-//     sens.imuVelocity(); sens.cameraVelocity(); sens.gyroPosition(); ...   // each source alone
+//     sens.pose();  sens.position();  sens.velocity();          // fused: x y z yaw, m, m/s
+//     sens.attitude();  sens.angularVelocity();                 // roll pitch yaw, rad; rad/s
+//     sens.imuVelocity(); sens.cameraVelocity(); ...            // each source alone
 //
 // Fusion (M4/FILTERS/KF.h): two Kalman filters, both predicted with every IMU sample:
 //   horizontal: IMU acc x / y + camera velocity -> x, y, vx, vy (+ accelerometer bias)
@@ -93,9 +94,30 @@ struct SensorsConfig {
 // What a filter's measurement does right now (the state machine, see the top).
 enum class Fix : uint8_t { TRACKING = 0, COASTING = 1, LOST = 2 };
 
-struct Pose {                    // the fused output: world frame, m and rad
+struct Pose {                    // world frame: a pose (m, rad) or its rate (m/s, rad/s)
   float x = 0.0f, y = 0.0f, z = 0.0f, yaw = 0.0f;   // z = height above the floor
 };
+
+// Element by element: + - between poses, * / by a number or by a pose (per-axis gains).
+// Yaw is NOT wrapped here (a Pose may hold rates): for an angle error use wrapPi(a.yaw - b.yaw).
+inline Pose operator+(const Pose& a, const Pose& b) { return {a.x + b.x, a.y + b.y, a.z + b.z, a.yaw + b.yaw}; }
+inline Pose operator-(const Pose& a, const Pose& b) { return {a.x - b.x, a.y - b.y, a.z - b.z, a.yaw - b.yaw}; }
+inline Pose operator*(const Pose& a, const Pose& b) { return {a.x * b.x, a.y * b.y, a.z * b.z, a.yaw * b.yaw}; }
+inline Pose operator/(const Pose& a, const Pose& b) { return {a.x / b.x, a.y / b.y, a.z / b.z, a.yaw / b.yaw}; }
+inline Pose operator*(const Pose& a, float k)       { return {a.x * k, a.y * k, a.z * k, a.yaw * k}; }
+inline Pose operator*(float k, const Pose& a)       { return a * k; }
+inline Pose operator/(const Pose& a, float k)       { return {a.x / k, a.y / k, a.z / k, a.yaw / k}; }
+inline Pose operator-(const Pose& a)                { return {-a.x, -a.y, -a.z, -a.yaw}; }
+inline Pose& operator+=(Pose& a, const Pose& b)     { return a = a + b; }
+inline Pose& operator-=(Pose& a, const Pose& b)     { return a = a - b; }
+inline Pose& operator*=(Pose& a, float k)           { return a = a * k; }
+inline Pose& operator/=(Pose& a, float k)           { return a = a / k; }
+
+inline float wrapPi(float a) {                       // angle -> -pi..pi
+  while (a >  3.14159265f) a -= 6.28318531f;
+  while (a < -3.14159265f) a += 6.28318531f;
+  return a;
+}
 
 class Sensors {
  public:
@@ -117,7 +139,10 @@ class Sensors {
   Pose     pose() const;                                         // x, y, z, yaw
   Vec3     position() const;                                     // m
   Vec3     velocity() const;                                     // m/s
+  Pose     poseVelocity() const;                                 // the pose's rate: vx, vy, vz (m/s), d yaw / dt (rad/s)
   float    yaw() const { return imu_.attitude().yaw; }           // rad (gyro only: drifts slowly)
+  Attitude attitude() const { return imu_.attitude(); }          // roll / pitch / yaw, rad (gyro + accelerometer)
+  Vec3     angularVelocity() const { return imu_.angularVelocity(); }   // rad/s, body frame, bias removed
   Vec3     positionStd() const;                                  // 1 std, m: how sure the filters are
   Vec3     velocityStd() const;                                  // 1 std, m/s
   Vec3     accBias() const;                                      // accelerometer bias found, m/s^2 (x / y body, z world)
@@ -142,10 +167,6 @@ class Sensors {
   Vec3     imuPosition() const { return imuPos_; }               // m, x / y: drifts within seconds alone
   Vec3     imuVelocity() const { return imu_.velocity(); }       // m/s, x / y
   Vec3     imuAcceleration() const { return imu_.worldAcceleration(); }   // m/s^2, gravity removed
-
-  // --- gyro ---
-  Vec3     gyroVelocity() const { return imu_.angularVelocity(); }  // rad/s, body frame, bias removed
-  Attitude gyroPosition() const { return imu_.attitude(); }         // roll / pitch / yaw, rad
 
   // --- camera (world frame) ---
   Vec3     cameraVelocity() const { return camVel_; }            // m/s, x / y (z: not measured yet)

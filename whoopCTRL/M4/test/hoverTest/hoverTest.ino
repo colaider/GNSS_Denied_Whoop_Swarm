@@ -33,18 +33,21 @@ drone::BetaflightConfig fcConfig() {
 }
 ctrl::PosConfig posConfig() {
   ctrl::PosConfig c;
-  c.kp = sensors::Pose{0.0f, 0.0f, 4.0f, 0.0f};
-  c.kd = sensors::Pose{0.0f, 0.0f, 3.0f, 0.0f};
-  c.ki = sensors::Pose{0.0f, 0.0f, 0.0f, 0.0f};
-  c.throttleHover = 0.29;
+     c.kp = sensors::Pose{4.0f, 4.0f, 9.0f, 0.0f};
+  c.kd = sensors::Pose{3.2f, 3.2f, 4.8f, 0.0f};
+  c.ki = sensors::Pose{1.0f, 1.0f, 1.5f, 0.0f};
+  c.throttleHover = 0.32f;
+  c.maxTiltDeg = 8.0f;
+  // c.throttleHover = 0.30;
   c.throttleMax = 0.45f;
-  c.maxTiltDeg = 5.0f;
   c.maxYawRateDps = 20.0f;
+  // c.pitchSign = -1.0f;
+  // c.rollSign  = 1.0f;
   return c;
 }
 ctrl::SMConfig smConfig() {
   ctrl::SMConfig c;
-  c.hoverHeight = 0.20f;
+  c.hoverHeight = 0.40f;
   c.reachedM = 0.02f;
   c.descendRate = 0.1f;
   c.safetyRate = 0.1f;
@@ -121,8 +124,12 @@ void sendTelem() {
 }
 
 void logChanges() {
-  static bool link = false;
+  static bool link = false, xy = false;
   static uint8_t state = 255;
+  if (sm.xyControl() != xy) {
+    xy = sm.xyControl();
+    say(xy ? "camera tracking: x / y held from here" : "camera lost: level only, x / y drift");
+  }
   if (fc.linkOk() != link) {
     link = fc.linkOk();
     say(link ? "FC answering" : "FC NOT answering");

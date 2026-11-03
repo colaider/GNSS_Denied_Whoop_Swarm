@@ -14,13 +14,11 @@ struct FlowConfig {
   int   pyramidLevels = 4;       // 4 levels: up to ~15 px of motion per frame
   int   window        = 9;       // LK window, pixels (odd)
   float quality       = 0.005f;   // GFTT: keep corners >= quality * best corner
-  float minDistance   = 8.0f;    // GFTT: spacing between points, pixels
-  int   maxPoints     = 48;      // budget: points alive in the whole image. Tracking cost grows with it:
-                                 // 64 (+ old replenish) gave ~12 fps while moving; 32 kept only ~10
-                                 // points tracked (68% valid frames). 48 with refill at 75% sits between.
+  float minDistance   = 4.0f;    // GFTT: spacing between points, pixels
+  int   maxPoints     = 50;      // budget: points alive in the whole image. Tracking cost grows with it:                   
   int   lkIterations  = 5;       // LK iterations per pyramid level at most (was 10)
   int   ransacIters   = 20;      // RANSAC random tries
-  float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier
+  float inlierPx      = 0.4f;    // RANSAC: largest error that still counts as inlier
   int   minInliers    = 6;       // fewer -> the result is not valid
   float refillBelow   = 0.75f;   // search a sector for new points when below this share of its quota
   int   searchesPerFrame = 1;    // most sectors searched per frame (the search is the slow part)
@@ -69,11 +67,8 @@ class FlowEstimator {
 
   const FlowResult& getResult() const { return result_; }
   const FlowTiming& getTiming() const { return timing_; }
-  const PointFlow*  getPoints(int& count) const {   // points tracked in the last update()
-    count = nOut_;
-    return out_;
-  }
-  void reset();                                     // forget points + previous frame
+  const PointFlow*  getPoints(int& count) const { count = nOut_; return out_; }
+  void reset();
 
  private:
   static constexpr int MAXP = ccv::Replenish::MAX_POINTS;

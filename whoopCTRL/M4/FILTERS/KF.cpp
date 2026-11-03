@@ -109,9 +109,11 @@ int VerticalKF::updateHeight(uint32_t tUs, float z, float std) {
   const float H[1][3] = {{1, 0, 0}};
   const float R[1] = {std * std};
   const int n = update(tUs, 1, H, &z, R, cfg_.gate, &innov_, &innovVar_);
-  if (n == 0 && rejects() >= cfg_.forceAfter) {    // the floor moved (a step, a table edge)
-    const int idx[1] = {Z};
-    force(tUs, 1, idx, &z, R);
+  if (n == 0 && rejects() >= cfg_.forceAfter) {    // the floor moved, or vz / bias ran off (flight log 31.10
+    const int idx[3] = {Z, VZ, BZ};                // 22:56: only z jumped, vz ran to -28 m/s): z from the ToF,
+    const float x[3] = {z, 0.0f, estimate().x[BZ]};   // vz and the bias start over (the ToF corrects them)
+    const float Rs[3] = {R[0], cfg_.stepVelStd * cfg_.stepVelStd, cfg_.biasInit * cfg_.biasInit};
+    force(tUs, 3, idx, x, Rs);
     steps_++;
     return 2;
   }

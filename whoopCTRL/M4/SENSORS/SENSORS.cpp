@@ -222,6 +222,21 @@ Vec3 Sensors::velocity() const {
   return v;
 }
 
+Pose Sensors::poseVelocity() const {
+  const Vec3 v = velocity();
+  const Vec3 w = imu_.angularVelocity();           // body rates p, q, r
+  const Attitude a = imu_.attitude();
+  // yaw rate from the body rates (Z-Y-X angles): (q sin roll + r cos roll) / cos pitch
+  float cp = cosf(a.pitch);
+  if (fabsf(cp) < 0.1f) cp = cp < 0.0f ? -0.1f : 0.1f;   // near +-90 deg pitch yaw is undefined
+  Pose pv;
+  pv.x = v.x;
+  pv.y = v.y;
+  pv.z = v.z;
+  pv.yaw = (w.y * sinf(a.roll) + w.z * cosf(a.roll)) / cp;
+  return pv;
+}
+
 // 1 std of a state: the square root of its variance (the diagonal of P)
 Vec3 Sensors::positionStd() const {
   using H = filters::HorizontalKF;

@@ -1,4 +1,7 @@
 #include "headers/betaflight.h"
+#if defined(ARDUINO) && BF_USE_USART1
+#include <Arduino.h>
+#endif
 
 namespace drone {
 
@@ -20,6 +23,17 @@ Betaflight::Betaflight(const BetaflightConfig& cfg) : cfg_(cfg) {
   for (int i = 0; i < 8; i++) motor_[i] = 1000;
   for (int i = 0; i < 18; i++) rc_[i] = 1000;
 }
+
+#if defined(ARDUINO) && BF_USE_USART1
+static arduino::UART bfUart(PA_9, PA_10, NC, NC);          // USART1: TX J2 pin 3, RX J2 pin 4
+static void bfWrite(const uint8_t* d, int n, void*) { bfUart.write(d, n); }
+
+void Betaflight::begin() {
+  bfUart.begin(BF_BAUD);
+  ownUart_ = true;
+  begin(bfWrite, nullptr);
+}
+#endif
 
 void Betaflight::begin(WriteFn write, void* ctx) {
   write_ = write;
@@ -90,6 +104,9 @@ void Betaflight::sendMotors() {
 void Betaflight::update(uint32_t nowUs) {
   const float dt = now_ ? (int32_t)(nowUs - now_) * 1e-6f : 0.0f;
   now_ = nowUs;
+#if defined(ARDUINO) && BF_USE_USART1
+  if (ownUart_) while (bfUart.available()) receive((uint8_t)bfUart.read());
+#endif
 
   // arm sequence: throttle low throughout; switch low first so Betaflight sees it off, then high
   if (armStage_) {
@@ -185,10 +202,12 @@ void Betaflight::setRates(float rollDps, float pitchDps, float yawDps, float thr
 
 bool Betaflight::setMotor(int index, float value) {
   if (armed_ || armSwitch_ || armStage_ || index < 0 || index >= cfg_.motorCount) return false;
-  motor_[index] = usThrottle(value);
+  const uint16_t v = usThrottle(value);
+  const bool changed = !motorTest_ || motor_[index] != v;
+  motor_[index] = v;
   motorTest_ = true;
   motorUs_ = now_;
-  sendMotors();
+  if (changed) sendMotors();                       // same value: update() repeats it at rcRateHz
   return true;
 }
 

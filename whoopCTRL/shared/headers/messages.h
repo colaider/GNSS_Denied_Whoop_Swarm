@@ -27,18 +27,33 @@ enum PacketType : uint8_t {
   PKT_TELEM        = 12,   // Telemetry: M4 state at 10-20 Hz
 
   PKT_SENSORS      = 13,   // SensorState: what the M4's sensors measured (M4 -> PC, testing)
+
+  // remote control (PC keyboard -> WiFi -> M7 -> M4 -> Betaflight)
+  PKT_REMOTE       = 14,   // RemoteCommand: sticks / arm / disarm / motor test, ~50 Hz
+  PKT_REMOTE_STATE = 15,   // RemoteState: what the M4 and the FC report, 10 Hz
+
+  // hover test (PC -> M4: FlightCommand, M4 -> PC: HoverTelem)
+  PKT_HOVER_TELEM  = 17,   // HoverTelem: controller in / out, every loop step at 50 Hz
+
+  PKT_FRAME_ROWS   = 18,   // FrameRows + nRows * width pixels: a slice of an image (WiFi: fits a datagram)
+
+  // Kalman filter calibration (M4 -> PC): the filters' inputs, to run them again offline
+  PKT_CAL_IMU      = 19,   // CAL_IMU_PER_PACKET * CalImuSample: every IMU sample (416 Hz)
+  PKT_CAL_TOF      = 20,   // CalTof: every ToF reading
+  PKT_CAL_CAM      = 21,   // CalCam: every flow packet (camera velocity)
 };
 
 // Packet types the M7 passes from the PC to the M4 unchanged.
 inline bool forM4(uint8_t type) {
   return type == PKT_SEG || type == PKT_TRAJ_START || type == PKT_TRAJ_REPLACE ||
-         type == PKT_FLIGHT_CMD;
+         type == PKT_FLIGHT_CMD || type == PKT_REMOTE;
 }
 
 // Packet types the M7 passes from the M4 to the PC unchanged.
 inline bool fromM4(uint8_t type) {
   return type == PKT_SEG_ACK || type == PKT_SEG_NACK || type == PKT_TELEM || type == PKT_LOG ||
-         type == PKT_SENSORS;
+         type == PKT_SENSORS || type == PKT_REMOTE_STATE || type == PKT_HOVER_TELEM ||
+         type == PKT_CAL_IMU || type == PKT_CAL_TOF || type == PKT_CAL_CAM;
 }
 
 struct __attribute__((packed)) FrameHeader {     // PKT_FRAME payload: this + pixels
@@ -47,6 +62,13 @@ struct __attribute__((packed)) FrameHeader {     // PKT_FRAME payload: this + pi
   float    fx, fy, cx, cy;                       // intrinsics of the image
 };
 static_assert(sizeof(FrameHeader) == 40, "Python '<5I2H4f'");
+
+struct __attribute__((packed)) FrameRows {       // PKT_FRAME_ROWS payload: this + nRows * width pixels
+  uint32_t seq;
+  uint16_t width, height, row0;
+  uint8_t  nRows;
+};
+static_assert(sizeof(FrameRows) == 11, "Python '<I3HB'");
 
 struct __attribute__((packed)) RawHeader {       // PKT_RAW payload: this + raw Bayer bytes
   uint32_t seq;
@@ -140,6 +162,9 @@ enum FlightCmd : uint8_t {
   CMD_LAND  = 2,                                 // land where it is
   CMD_ABORT = 3,                                 // clear the trajectory queue, then hold
   CMD_KILL  = 4,                                 // motors off now
+  CMD_START = 5,                                 // take off and hover (StateMachine::start), after CMD_CALIBRATE
+  CMD_PING  = 6,                                 // nothing: the PC is still there (lost link -> SAFETY)
+  CMD_CALIBRATE = 7,                             // on the ground, still 2 s: gyro bias + start frame (StateMachine::calibrate)
 };
 
 struct __attribute__((packed)) FlightCommand {   // PKT_FLIGHT_CMD payload
@@ -203,5 +228,90 @@ struct __attribute__((packed)) SensorState {     // PKT_SENSORS payload, with ev
   uint16_t camForced, tofSteps;                  // camera forced in after refusals / floor steps, since startup
 };
 static_assert(sizeof(SensorState) == 215, "Python '<3IB49f2b2H'");
+
+// ---------------------------------------------------------------- remote control
+enum RemoteAction : uint8_t {
+  RC_STICKS = 0,                                 // fly: sticks below (Betaflight::setSticks)
+  RC_ARM    = 1,                                 // start the arm sequence (throttle forced low)
+  RC_DISARM = 2,                                 // disarm now
+  RC_MOTOR  = 3,                                 // motor test, disarmed only: `motor` at `throttle`
+};
+
+struct __attribute__((packed)) RemoteCommand {   // PKT_REMOTE payload, PC -> M4
+  uint16_t seq;                                  // +1 per packet
+  uint8_t  action;                               // RemoteAction
+  uint8_t  mode;                                 // drone::FlightMode: 0 ACRO, 1 ANGLE, 2 HORIZON
+  uint8_t  motor;                                // RC_MOTOR: 0..3 = motor 1..4, 255 = all
+  float    roll, pitch, yaw;                     // sticks -1..1
+  float    throttle;                             // 0..1 (RC_MOTOR: motor speed 0..1)
+};
+static_assert(sizeof(RemoteCommand) == 21, "Python '<H3B4f'");
+
+struct __attribute__((packed)) RemoteState {     // PKT_REMOTE_STATE payload, M4 -> PC
+  uint32_t tUs;                                  // shared clock
+  uint16_t cmdSeq;                               // the last RemoteCommand received
+  uint8_t  fcLink;                               // 1 = the FC answers
+  uint8_t  armed;                                // 0 disarmed, 1 arming, 2 armed
+  uint8_t  mode;                                 // FlightMode sent
+  uint8_t  blockerCount;                         // Betaflight's arming blockers: the last bit (count - 1)
+  uint32_t blockers;                             // is always ARM_SWITCH
+  float    battery;                              // V
+  float    roll, pitch, yaw;                     // the FC's attitude, deg
+  uint16_t rc[8];                                // the last RC frame sent, us
+};
+static_assert(sizeof(RemoteState) == 46, "Python '<IH4BI4f8H'");
+
+// ---------------------------------------------------------------- hover test
+enum HoverFlags : uint8_t { HOV_ARMED = 1, HOV_CAM_OK = 2, HOV_TOF_OK = 4, HOV_FC_LINK = 8, HOV_CALIBRATED = 16 };
+
+struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 -> PC
+  uint32_t tUs;                                  // shared clock
+  uint8_t  state;                                // ctrl::StateMachine::State
+  uint8_t  flags;                                // HoverFlags (CAM_OK / TOF_OK: that filter is not LOST)
+  float    x, y, z, yaw;                         // fused pose, m / rad
+  float    vx, vy, vz, vyaw;                     // its rate, m/s / rad/s
+  float    tx, ty, tz, tyaw;                     // target
+  float    roll, pitch, yawRate, throttle;       // sent to Betaflight: deg, deg, deg/s, 0..1
+  float    ix, iy, iz;                           // the controller's integral, m/s^2
+  float    ax, ay, az;                           // IMU world acceleration (gravity removed), m/s^2
+  float    attRoll, attPitch;                    // measured attitude, deg (does Betaflight follow?)
+  float    battery;                              // V
+};
+static_assert(sizeof(HoverTelem) == 106, "Python '<I2B25f'");
+
+// ---------------------------------------------------------------- Kalman filter calibration
+struct __attribute__((packed)) CalImuSample {    // one IMU sample, as the filters got it
+  uint32_t tUs;                                  // shared clock
+  float    ax, ay, az;                           // accelerometer, body, g (gravity included)
+  float    gx, gy, gz;                           // gyro, body, rad/s, bias removed
+  float    awx, awy, awz;                        // world acceleration, gravity removed, m/s^2: the filters' input
+  float    yaw;                                  // rad
+};
+static_assert(sizeof(CalImuSample) == 44, "Python '<I10f'");
+constexpr int CAL_IMU_PER_PACKET = 5;            // 220 bytes: one RPC message
+
+struct __attribute__((packed)) CalTof {          // PKT_CAL_TOF payload
+  uint32_t tUs;                                  // middle of the measurement
+  float    rangeM, height, signalMcps;           // along the beam / tilt corrected (the filter's measurement), m
+  uint8_t  valid, status;
+  float    std;                                  // the std the filter got, m
+  int8_t   result;                               // 1 applied, 0 refused, -1 too old, 2 floor step, 3 reset,
+                                                 // -2 not given to the filter (invalid / tilted)
+  float    innov, innovStd;                      // measured - predicted, m, and what it should be
+};
+static_assert(sizeof(CalTof) == 31, "Python '<I3f2Bfb2f'");
+
+struct __attribute__((packed)) CalCam {          // PKT_CAL_CAM payload
+  uint32_t tUs;                                  // middle of the frame pair: the velocity's time
+  uint8_t  valid;                                // it gave a velocity (the rest only means something then)
+  uint16_t nInliers;
+  float    vx, vy;                               // world, m/s: the filter's measurement
+  float    rmsPx, fx, pairS, rangeM, rot;        // what its std is made of: tracking error px, focal px,
+                                                 // frame pair s, ToF range m, gyro rotation over the pair rad
+  float    std;                                  // the std the filter got, m/s
+  int8_t   result;                               // 2 applied, 0 refused, -1 too old, 3 reset, -2 no velocity
+  float    innovX, innovY, innovStdX, innovStdY; // measured - predicted, m/s, and what it should be
+};
+static_assert(sizeof(CalCam) == 56, "Python '<IBH8fb4f'");
 
 }  // namespace msg
