@@ -111,6 +111,7 @@ void sendTelem() {
   const sensors::ToFReading& tr = sens.tofReading();
   m.tofRange = tr.rangeM;  m.tofHeight = sens.height();  m.tofSignal = tr.signalMcps;
   m.tofValid = tr.valid;  m.tofStatus = tr.status;  m.floorSteps = (uint16_t)sens.vertical().steps();
+  m.camYawRate = sens.cameraDebug().yawRate * 57.29578f;  m.gyroYawRate = sens.cameraDebug().gyroYawRate * 57.29578f;
   m7.send(msg::PKT_HOVER_TELEM, &m, sizeof(m));
 }
 

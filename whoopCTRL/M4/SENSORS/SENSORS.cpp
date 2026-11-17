@@ -125,6 +125,9 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
           vis_.estimateVelocity(flow->t1Us, imu_.attitude(), camDbg_.rot, tof, dZ, *flow, pts, n);
       camDbg_.vx = v.vx;
       camDbg_.vy = v.vy;
+      camDbg_.yawRate = v.yawRate;
+      const float pairDt = (flow->t1Us - flow->t0Us) * 1e-6f;
+      camDbg_.gyroYawRate = pairDt > 0.0f ? camDbg_.rot.z / pairDt : 0.0f;
 
       Vec3 cam;                                    // camera axes; z (along the view) not measured yet
       cam.x = v.vx;

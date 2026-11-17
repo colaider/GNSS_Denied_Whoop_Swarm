@@ -22,11 +22,12 @@ PKT_LOG, PKT_FLOW, PKT_FLIGHT_CMD, PKT_HOVER_TELEM, PKT_FRAME_ROWS = 2, 5, 11, 1
 PKT_SEG, PKT_TRAJ_START = 6, 9
 CMD_HOLD, CMD_LAND, CMD_KILL, CMD_START, CMD_PING, CMD_CALIBRATE = 1, 2, 4, 5, 6, 7
 STATES = ["BOOT", "READY", "SPINUP", "CLIMB", "FLY", "SAFETY", "LAND"]
-TELEM_FMT = "<I2B28f2BH"                # msg::HoverTelem
+TELEM_FMT = "<I2B28f2BH2f"                # msg::HoverTelem
 FIELDS = ["tUs", "state", "flags", "x", "y", "z", "yaw", "vx", "vy", "vz", "vyaw",
           "tx", "ty", "tz", "tyaw", "roll", "pitch", "yawRate", "throttle",
           "ix", "iy", "iz", "ax", "ay", "az", "attRoll", "attPitch", "battery",
-          "tofRange", "tofHeight", "tofSignal", "tofValid", "tofStatus", "floorSteps"]
+          "tofRange", "tofHeight", "tofSignal", "tofValid", "tofStatus", "floorSteps",
+          "camYawRate", "gyroYawRate"]
 ARMED, CAM_OK, TOF_OK, FC_LINK, CALIBRATED = 1, 2, 4, 8, 16
 FLOW_HDR = struct.Struct("<4I9f3HB")    # msg::FlowHeader
 POINT = struct.Struct("<2H4fB")         # msg::PointMsg

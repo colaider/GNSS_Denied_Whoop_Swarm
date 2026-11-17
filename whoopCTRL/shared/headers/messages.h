@@ -286,8 +286,10 @@ struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 
   float    tofSignal;                            // return signal, MCPS (weak: dark / far / grazing)
   uint8_t  tofValid, tofStatus;                  // our check / the sensor's range status (0 = ok)
   uint16_t floorSteps;                           // height filter jumps to the ToF so far (refused 3x in a row)
+  float    camYawRate, gyroYawRate;              // turn about the camera's view axis, deg/s: fitted from the points / the
+                                                 // gyro over the same frame pair (should agree; 0 = no fit)
 };
-static_assert(sizeof(HoverTelem) == 122, "Python '<I2B28f2BH'");
+static_assert(sizeof(HoverTelem) == 130, "Python '<I2B28f2BH2f'");
 
 // ---------------------------------------------------------------- gain tuning
 struct __attribute__((packed)) Gains {           // PKT_GAINS payload: PosCTRL gains, x y z yaw each

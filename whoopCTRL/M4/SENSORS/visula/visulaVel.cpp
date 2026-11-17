@@ -37,34 +37,40 @@ void visualVel::undistort(float u, float v, const msg::FlowHeader& flow, float& 
 
 visualVel::visualVelocityVector visualVel::estimateVelocity(uint32_t tUs, const sensors::Attitude& att, const sensors::Vec3& rot, const sensors::ToFReading& tof, float dZ, const msg::FlowHeader& flow, const msg::PointMsg* pts, int n){
     visualVel::visualVelocityVector out;
-    float sumVx = 0.0f; float sumVy = 0.0f; int used = 0;
-
     if (!flow.valid || !tof.valid || flow.fx <= 0.0f || flow.fy <= 0.0f || pts == nullptr || n <= 0) return out;
 
     float dt = (flow.t1Us - flow.t0Us) * 1e-6f;            // time between the two frames, seconds
     if (dt <= 0.0f) return out;
 
     float Z = tof.rangeM;
+    static float px[MAXN], py[MAXN], qx[MAXN], qy[MAXN];
+    int used = 0;
+    for(int i=0;i<n && used<MAXN;i++){
+        if (!pts[i].inlier) continue; 
 
-    for(int i=0;i<n;i++){
-        if (!pts[i].inlier) continue;                      // RANSAC said: not moving with the floor
-
-        // where the point was and is, lens distortion taken out, as tan of its angle (x/z); xn: halfway
         float x0, y0, x1, y1;
         undistort(pts[i].x - pts[i].dx, pts[i].y - pts[i].dy, flow, x0, y0);
         undistort(pts[i].x, pts[i].y, flow, x1, y1);
         const float xn = 0.5f * (x0 + x1), yn = 0.5f * (y0 + y1);
 
-        // derotation: the flow the gyro rotation alone makes (small angles), 1 + xn*xn = sec^2 of the point's angle
-        // height change: closer to the floor (dZ < 0) every point moves out from the centre, delta p = -p*dZ/Z
-        sumVx += -((x1 - x0) - (xn*yn*rot.x - (1.0f + xn*xn)*rot.y + yn*rot.z) + xn*dZ/Z) * Z / dt;
-        sumVy += -((y1 - y0) - ((1.0f + yn*yn)*rot.x - xn*yn*rot.y - xn*rot.z) + yn*dZ/Z) * Z / dt;
+        px[used] = xn;  py[used] = yn;
+        qx[used] = (x1 - x0) - (xn*yn*rot.x - (1.0f + xn*xn)*rot.y) + xn*dZ/Z;
+        qy[used] = (y1 - y0) - ((1.0f + yn*yn)*rot.x - xn*yn*rot.y) + yn*dZ/Z;
         used++;
     }
     if (used == 0) return out;
 
-    out.vx = sumVx/used; out.vy = sumVy/used;              // camera frame, m/s
-
+    float a, b;                                            
+    if (used >= 4) {
+        const vw lx = linReg(py, qx, used); const vw ly = linReg(px, qy, used);
+        a = lx.w;  b = ly.w;
+        out.yawRate = 0.5f * (lx.v - ly.v) / dt;
+    } else {
+        a = b = 0.0f;
+        for(int i=0;i<used;i++){ a += qx[i] - py[i]*rot.z; b += qy[i] + px[i]*rot.z; }
+        a /= used;  b /= used;
+    }
+    out.vx = -a * Z / dt; out.vy = -b * Z / dt;            // camera frame, m/s
     return out;
 }
 

@@ -188,6 +188,8 @@ class Sensors {
     Vec3  rot;                                   // gyro rotation over the frame pair, camera axes, rad
     float dZ = 0.0f;                             // distance change over the frame pair (ToF trend), m
     float vx = 0.0f, vy = 0.0f;                  // estimateVelocity's result, camera axes, m/s
+    float yawRate = 0.0f, gyroYawRate = 0.0f;    // turn about the view axis over the pair, rad/s: fitted from the
+                                                 // points / the gyro (camera z = -body z; 0 = no fit)
   };
   const CameraDebug& cameraDebug() const { return camDbg_; }
 
