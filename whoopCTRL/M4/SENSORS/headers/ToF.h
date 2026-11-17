@@ -24,7 +24,8 @@ namespace sensors {
 struct ToFConfig {
   bool     longMode  = false;      // false: short mode (to ~1.3 m, best in daylight); true: ~4 m
   uint32_t budgetUs  = 20000;      // time per measurement (short >= 20 ms, long >= 33 ms)
-  float    minRangeM = 0.0f;       // closer than this is not trusted. Was 0.04: on the floor it reads 2-8 mm
+  float    minRangeM = 0.001f;     // closer than this is not trusted (0 mm: a glitch, the camera divides by it -> NaN,
+                                   // hover log 04.11). Was 0.04: on the floor it reads 2-8 mm
                                    // (status 0, strong signal, kfCalib 03.11), and without it the height ran on
                                    // the vibrating IMU alone at every takeoff (z -0.08 m, vz -0.6 m/s)
   float    maxRangeM = 1.3f;       // farther than this is not trusted

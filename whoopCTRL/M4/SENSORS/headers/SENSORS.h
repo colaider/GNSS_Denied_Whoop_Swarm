@@ -89,6 +89,11 @@ struct SensorsConfig {
   float stillG      = 0.03f;
   float stillS      = 0.3f;
   float stillVelStd = 0.02f;
+  // takeoff (takeoff(true): SPINUP, CLIMB): the motors shift the vertical accelerometer by -4..-8 m/s^2
+  // within 0.2 s (log 17.11 12:06). Learned on the ground as ~0, the filter then saw a fall, refused the
+  // ToF as outliers, forced it back: height 11 -> 1 -> 30 cm, the climb shot to 97 cm. So the bias is
+  // kept this uncertain before every ToF reading: the height and its rate come from the ToF.
+  float takeoffBiasStd = 3.0f;
 };
 
 // What a filter's measurement does right now (the state machine, see the top).
@@ -149,6 +154,7 @@ class Sensors {
   Fix      horizontalFix() const { return hFix_; }               // camera: TRACKING / COASTING / LOST
   Fix      verticalFix() const { return vFix_; }                 // ToF
   bool     still() const { return still_; }                      // the IMU says: not moving at all
+  void     takeoff(bool on) { takeoff_ = on; }                   // motors spinning up / climbing (see takeoffBiasStd)
   float    noiseScale() const { return k_; }                     // the k given to the filters now
   const filters::HorizontalKF& horizontal() const { return hkf_; }   // innovations, counters
   const filters::VerticalKF&   vertical() const { return vkf_; }
@@ -189,14 +195,14 @@ class Sensors {
   // the sensors themselves, for anything not above
   const IMU& imu() const { return imu_; }
   const ToF& tof() const { return tof_; }
+  Vec3 toCamera(const Vec3& body) const;                          // body axes -> camera axes
+  Vec3 toBody(const Vec3& cam) const;                             // camera axes -> body axes
 
  private:
   void addGyro(const ImuSample& s);                               // into the gyro history
   void updateFix(uint32_t nowUs);                                 // the state machine + its made-up measurements
   bool rotationBetween(uint32_t t0Us, uint32_t t1Us, Vec3& out) const;   // body, rad; false: not in the history
   bool rangeRate(float& out);                                     // ToF trend, m/s (linReg); false: too few readings
-  Vec3 toCamera(const Vec3& body) const;                          // body axes -> camera axes
-  Vec3 toBody(const Vec3& cam) const;                             // camera axes -> body axes
 
   SensorsConfig cfg_;
   IMU           imu_;
@@ -230,7 +236,7 @@ class Sensors {
   Fix      hFix_ = Fix::TRACKING, vFix_ = Fix::TRACKING;
   uint32_t camSeenUs_ = 0, tofSeenUs_ = 0;    // last valid camera velocity (tMid) / ToF height
   uint32_t pseudoUs_  = 0;                    // last made-up measurement (LOST / still)
-  bool     still_     = false;
+  bool     still_     = false, takeoff_ = false;
   float    stillForS_ = 0.0f;                 // how long the IMU has looked still
   float    k_         = 1.0f;
 };

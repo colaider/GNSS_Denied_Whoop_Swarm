@@ -23,8 +23,8 @@ enum class ExposureMode : uint8_t {
 struct CameraConfig {
   int32_t  sensorMode   = CAMERA_R320x240;  // what the chip reads out (sets scale + field of view)
   int32_t  windowMode   = CAMERA_R320x240;  // centre part transferred; = sensorMode -> whole image, no zoom
-  uint16_t cropWidth    = 100;              // OUTPUT size; reads 2x this (200x200) and bins 2x2 -> grey
-  uint16_t cropHeight   = 100;
+  uint16_t cropWidth    = 160;              // OUTPUT size; reads 2x this (320x240: the whole image) and bins 2x2 -> grey
+  uint16_t cropHeight   = 120;              // (100x100 saw only the centre: 62 % of the width, 83 % of the height)
   int16_t  cropShiftX   = 0;                // move the crop centre away from the image centre (camera pixels)
   int16_t  cropShiftY   = 0;
   // Motion blur = how far the image moves during the exposure. With the AEC alone (~40 ms)
@@ -34,9 +34,9 @@ struct CameraConfig {
   // 10 ms = one flicker period of 50 Hz mains lighting, so the brightness does not pulse from
   // frame to frame (LK assumes it constant). In daylight / DC LEDs it could be shorter.
   ExposureMode exposure     = ExposureMode::AUTO_CAPPED;
-  uint32_t maxExposureUs    = 10000;        // AUTO_CAPPED: the longest exposure the AEC may use
-  uint8_t  maxPostGain      = 0xc0;         // AUTO_CAPPED: most digital gain it may use (P1:0x20;
-                                            // datasheet default; the library had limited it to 0x40)
+  uint32_t maxExposureUs    = 20000;        // AUTO_CAPPED: the longest exposure the AEC may use (10 ms: too dark)
+  uint8_t  maxPostGain      = 0xff;         // AUTO_CAPPED: most digital gain it may use (P1:0x20; datasheet
+                                            // default 0xc0: too dark; the library had limited it to 0x40)
   uint32_t manualExposureUs = 5000;         // MANUAL: fixed exposure
   uint8_t  gain             = 0x40;         // MANUAL: global gain (4.4 fixed point, 0x40 = 4.0)
   float    nominalRowUs     = 59.8f;        // sensor row time until it is measured in begin()

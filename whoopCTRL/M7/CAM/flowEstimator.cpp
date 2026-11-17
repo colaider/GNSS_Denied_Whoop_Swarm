@@ -6,10 +6,10 @@ namespace vision {
 
 FlowEstimator::FlowEstimator(const FlowConfig& cfg)
     : cfg_(cfg),
-      gftt_(cfg.maxPoints, cfg.quality, cfg.minDistance),
+      gftt_(cfg.maxPoints, cfg.quality, cfg.minDistance, cfg.minScore, cfg.border),
       lk_(cfg.pyramidLevels, cfg.window, cfg.lkIterations),
       ransac_(cfg.ransacIters, cfg.inlierPx, cfg.minInliers),
-      rep_(gftt_, cfg.maxPoints, 2, 2, 3, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
+      rep_(gftt_, cfg.maxPoints, cfg.sectors, cfg.sectors, 3, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
 
 void FlowEstimator::begin(const calib::CameraIntrinsics& k) {
   cx_ = k.cx;

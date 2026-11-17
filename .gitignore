@@ -1,0 +1,9 @@
+# flight / calibration logs: big, kept on the PC only
+**/logs/
+
+# Python
+__pycache__/
+*.pyc
+
+# CAD lock / temp files
+~$*

@@ -64,6 +64,13 @@ struct ImuConfig {
   float accelCalmS = 0.1f;         // and both have been true for this long: while shaking, |acc|
                                    // passes 1 g for an instant at a tilted direction, and taking
                                    // it tilted the attitude by ~8 deg (gravity leak 1.4 m/s^2)
+  // Flying it is never calm: the motors' vibration shifts |acc| to ~0.65 g, so roll / pitch ran on the
+  // gyro alone and drifted 0.15 deg/s (roll -12 deg after 80 s, the drone level; z got bad with it,
+  // log 17.11). In flight the accelerometer is averaged over accelAvgS (vibration cancels, the average
+  // turned with the gyro) and pulls roll / pitch slowly: a 1.5 s move barely moves them.
+  float accelFlightTrust = 0.2f;   // 1/s
+  float accelAvgS  = 0.5f;
+  float accelAvgMinG = 0.4f, accelAvgMaxG = 1.6f;   // the average used only within these
   float maxDtS     = 0.05f;        // larger gaps between samples are not integrated
 };
 
@@ -118,6 +125,8 @@ class IMU {
   ImuSample last_;
   bool      haveLast_ = false;                  // a previous sample exists (for dt)
   float     calmS_    = 0.0f;                   // how long the accelerometer has been usable
+  Vec3      accAvg_;                            // accelerometer average (accelAvgS), body frame, g
+  bool      haveAvg_  = false;
   bool      started_  = false;
 };
 

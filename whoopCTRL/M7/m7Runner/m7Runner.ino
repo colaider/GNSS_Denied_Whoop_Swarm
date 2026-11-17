@@ -46,9 +46,10 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M7/CAM/closedCV/replenish.cpp"
 
 // ---- debug stream to the PC ----
-const uint32_t FRAME_EVERY  = PC_WIFI ? 1 : 3;   // send the image every N frames (0 = never). 10 KB over USB per
-                                       // image: every frame made the loop miss the next one (21 -> 10 fps).
-                                       // WiFi: one slice per loop, the next image when the last one is out
+const uint32_t FRAME_EVERY  = PC_WIFI ? 1 : 3;   
+                                       
+                                       // WiFi: SLICES_PER_LOOP slices per loop, the next image when the last one is out
+const int      SLICES_PER_LOOP = 4;    // WiFi: 3 rows each (160 px wide, 508 B datagrams): 160x120 image in 10 loops
 const bool     SEND_POINTS  = true;    // flow to the PC with its tracked points
 const uint32_t STATS_EVERY_MS = 5000;  // a status line to the PC
 
@@ -106,12 +107,12 @@ void sendFlow(uint32_t flowUs) {
 
   if (m4ok) m4.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, pointBytes);   // all points, inliers marked
 
-  if (!SEND_POINTS) h.count = 0;
-  pc.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, SEND_POINTS ? pointBytes : 0);
+  const int pcMax = PC_WIFI ? (comm::WifiLink::MAX_DATAGRAM - 9 - sizeof(h)) / sizeof(msg::PointMsg) : n;   // WiFi: one datagram, 20 points
+  h.count = SEND_POINTS ? (n < pcMax ? n : pcMax) : 0;
+  pc.send(msg::PKT_FLOW, &h, sizeof(h), pointMsgs, (uint32_t)h.count * sizeof(msg::PointMsg));
 }
 
-// WiFi: the image is copied and sent one slice (one datagram) per loop. A burst of all
-// slices got dropped (WiFi chip / PC receive buffer): only the first rows arrived.
+// WiFi: the image is copied and sent a few slices (one datagram each) per loop.
 uint8_t  sliceImg[vision::MAX_CROP_W * vision::MAX_CROP_H];
 uint32_t sliceSeq = 0;
 uint16_t sliceW = 0, sliceH = 0, sliceRow = 0;
@@ -224,7 +225,7 @@ void loop() {
   const uint32_t t1 = shared::nowUs();
   sendFlow(flowUs);                            // M4 first: it is the one that flies
   if (FRAME_EVERY && f.seq % FRAME_EVERY == 0) sendFrame(f);
-  if (PC_WIFI) sendSlice();
+  if (PC_WIFI) for (int i = 0; i < SLICES_PER_LOOP; i++) sendSlice();
   if (rawRequested) {                          // debug: the untouched Bayer image of this frame
     rawRequested = false;
     msg::RawHeader r = {f.seq, camera.rawWidth(), camera.rawHeight()};

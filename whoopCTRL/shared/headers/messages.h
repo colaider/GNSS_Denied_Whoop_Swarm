@@ -41,19 +41,22 @@ enum PacketType : uint8_t {
   PKT_CAL_IMU      = 19,   // CAL_IMU_PER_PACKET * CalImuSample: every IMU sample (416 Hz)
   PKT_CAL_TOF      = 20,   // CalTof: every ToF reading
   PKT_CAL_CAM      = 21,   // CalCam: every flow packet (camera velocity)
+
+  PKT_GAINS        = 22,   // Gains: controller gains in flight (PC -> M4, autoTune.py)
+  PKT_POINT_DEPTH  = 23,   // PointDepthHeader + count * PointDepthMsg: tracked points in 3D (M4 -> PC, watching)
 };
 
 // Packet types the M7 passes from the PC to the M4 unchanged.
 inline bool forM4(uint8_t type) {
   return type == PKT_SEG || type == PKT_TRAJ_START || type == PKT_TRAJ_REPLACE ||
-         type == PKT_FLIGHT_CMD || type == PKT_REMOTE;
+         type == PKT_FLIGHT_CMD || type == PKT_REMOTE || type == PKT_GAINS;
 }
 
 // Packet types the M7 passes from the M4 to the PC unchanged.
 inline bool fromM4(uint8_t type) {
   return type == PKT_SEG_ACK || type == PKT_SEG_NACK || type == PKT_TELEM || type == PKT_LOG ||
          type == PKT_SENSORS || type == PKT_REMOTE_STATE || type == PKT_HOVER_TELEM ||
-         type == PKT_CAL_IMU || type == PKT_CAL_TOF || type == PKT_CAL_CAM;
+         type == PKT_CAL_IMU || type == PKT_CAL_TOF || type == PKT_CAL_CAM || type == PKT_POINT_DEPTH;
 }
 
 struct __attribute__((packed)) FrameHeader {     // PKT_FRAME payload: this + pixels
@@ -100,7 +103,8 @@ constexpr uint32_t FLOW_MAX_BYTES  = sizeof(FlowHeader) + FLOW_MAX_POINTS * size
 // A trajectory is uploaded as a queue of segments while it is being flown: the PC keeps
 // ~2 s queued ahead. Each segment's first point = the previous segment's last point
 // (position + velocity), so cubic Hermite interpolation is smooth across segments.
-// Positions are in the drone's own frame: origin = takeoff point, x/y/z in metres.
+// Positions are in the drone's own frame, x/y/z in metres, relative to where the trajectory
+// starts (trajTest: the hover point, StateMachine::origin).
 
 struct __attribute__((packed)) TrajPoint {       // one waypoint, 32 bytes
   uint32_t tMs;                                  // time from the trajectory start
@@ -270,7 +274,7 @@ struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 
   uint8_t  flags;                                // HoverFlags (CAM_OK / TOF_OK: that filter is not LOST)
   float    x, y, z, yaw;                         // fused pose, m / rad
   float    vx, vy, vz, vyaw;                     // its rate, m/s / rad/s
-  float    tx, ty, tz, tyaw;                     // target
+  float    tx, ty, tz, tyaw;                     // setpoint (StateMachine::setpoint)
   float    roll, pitch, yawRate, throttle;       // sent to Betaflight: deg, deg, deg/s, 0..1
   float    ix, iy, iz;                           // the controller's integral, m/s^2
   float    ax, ay, az;                           // IMU world acceleration (gravity removed), m/s^2
@@ -278,6 +282,27 @@ struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 
   float    battery;                              // V
 };
 static_assert(sizeof(HoverTelem) == 106, "Python '<I2B25f'");
+
+// ---------------------------------------------------------------- gain tuning
+struct __attribute__((packed)) Gains {           // PKT_GAINS payload: PosCTRL gains, x y z yaw each
+  float kp[4], kd[4], ki[4];
+};
+static_assert(sizeof(Gains) == 48, "Python '<12f'");
+
+// ---------------------------------------------------------------- point depth (sensors::PointDepth)
+struct __attribute__((packed)) PointDepthHeader {   // PKT_POINT_DEPTH payload: this + count * PointDepthMsg
+  uint32_t tUs;                                  // shared clock
+  uint8_t  count;
+};
+static_assert(sizeof(PointDepthHeader) == 5, "Python '<IB'");
+
+struct __attribute__((packed)) PointDepthMsg {   // one point, the surest first
+  uint16_t id;
+  int16_t  x, y, z;                              // start frame, mm (z: height above the floor)
+  uint16_t std;                                  // depth 1 std, mm
+};
+static_assert(sizeof(PointDepthMsg) == 10, "Python '<H3hH'");
+constexpr int POINT_DEPTH_MAX = 48;              // 5 + 48 * 10 = 485 bytes: one WiFi datagram (508)
 
 // ---------------------------------------------------------------- Kalman filter calibration
 struct __attribute__((packed)) CalImuSample {    // one IMU sample, as the filters got it

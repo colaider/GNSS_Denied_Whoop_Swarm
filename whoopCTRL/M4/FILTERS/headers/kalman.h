@@ -194,6 +194,14 @@ class DelayedKF {
     return true;
   }
 
+  // State s at least this uncertain (variance var, its correlations forgotten), now and in the
+  // remembered steps (a late measurement replays from them): it may change in a way the model
+  // does not know (the accelerometer bias while the motors spin up).
+  void loosen(int s, float var) {
+    loosen(g_, s, var);
+    for (int j = 0; j < hist_.count(); j++) loosen(hist_.at(j).g, s, var);
+  }
+
   const Gaussian<N>& estimate() const { return g_; }
   uint32_t timeUs() const { return tUs_; }
   int      rejects() const { return rejects_; }     // measurements refused in a row
@@ -226,6 +234,12 @@ class DelayedKF {
       d += y[c] * v[c];
     }
     return d;
+  }
+
+  static void loosen(Gaussian<N>& g, int s, float var) {
+    if (g.P[s][s] >= var) return;
+    for (int a = 0; a < N; a++) g.P[s][a] = g.P[a][s] = 0.0f;
+    g.P[s][s] = var;
   }
 
   void step(Gaussian<N>& g, float dt, const float u[U]) const {

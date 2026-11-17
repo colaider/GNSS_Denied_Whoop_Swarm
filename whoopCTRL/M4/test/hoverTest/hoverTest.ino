@@ -1,5 +1,4 @@
-// Hover test. PC: python hoverTest.py NICLA_IP   C = calibrate, Enter = arm + hover, L = land, Space = kill.
-// M7: m7Runner with PC_WIFI 1. Gains and limits: posConfig() / smConfig() below, then re-upload.
+
 
 #ifndef CORE_CM4
 #error "Set Tools > Target core: M4 Co-processor"
@@ -23,6 +22,7 @@
 #include "C:/Users/penturas/Desktop/codits/GNSS denied Whoop swarm/whoopCTRL/M4/CTRL/StateMachine.cpp"
 
 const float MAX_HEIGHT = 3.0f;          // m: higher -> kill
+const sensors::Pose HOVER{0.0f, 0.0f, 0.60f, 0.0f};   // where to hover, start frame (calibration point on the floor = 0)
 
 drone::BetaflightConfig fcConfig() {
   drone::BetaflightConfig c;
@@ -31,23 +31,11 @@ drone::BetaflightConfig fcConfig() {
   c.armTimeoutMs = 4000;
   return c;
 }
-ctrl::PosConfig posConfig() {
-  ctrl::PosConfig c;
-     c.kp = sensors::Pose{4.0f, 4.0f, 9.0f, 0.0f};
-  c.kd = sensors::Pose{3.2f, 3.2f, 4.8f, 0.0f};
-  c.ki = sensors::Pose{1.0f, 1.0f, 1.5f, 0.0f};
-  c.throttleHover = 0.32f;
-  c.maxTiltDeg = 8.0f;
-  // c.throttleHover = 0.30;
-  c.throttleMax = 0.45f;
-  c.maxYawRateDps = 20.0f;
-  // c.pitchSign = -1.0f;
-  // c.rollSign  = 1.0f;
-  return c;
-}
 ctrl::SMConfig smConfig() {
   ctrl::SMConfig c;
-  c.hoverHeight = 0.40f;
+  c.spinupRate = 0.15f;                 // takeoff is blind (camera 0-5 inliers below ~0.4 m): through it fast
+  c.climbRate = 0.5f;                   // 0.3: 2-3 s level without x / y, drifted 10-30 cm
+  c.xyAfterS = 0.3f;
   c.reachedM = 0.02f;
   c.descendRate = 0.1f;
   c.safetyRate = 0.1f;
@@ -58,7 +46,7 @@ comm::CoreLink      core;
 comm::Communication m7;
 sensors::Sensors    sens;
 drone::Betaflight   fc(fcConfig());
-ctrl::PosCTRL       pos(posConfig());
+ctrl::PosCTRL       pos;              // gains: PosConfig in CTRL/headers/PosCTRL.h
 ctrl::StateMachine  sm(sens, fc, pos, smConfig());
 
 void say(const char* fmt, double a = 0, double b = 0, double c = 0) {
@@ -92,7 +80,7 @@ void readM7() {
   static comm::Packet p;
   bool gotFlow = false;
   while (m7.receive(p)) {
-    if (p.type == msg::PKT_FLOW && p.len >= sizeof(msg::FlowHeader)) {
+    if (p.type == msg::PKT_FLOW && p.len >= sizeof(msg::FlowHeader)) {  
       const msg::FlowHeader& f = *(const msg::FlowHeader*)p.data;
       if (p.len != sizeof(msg::FlowHeader) + f.count * sizeof(msg::PointMsg)) continue;
       sens.update(&f, (const msg::PointMsg*)(p.data + sizeof(msg::FlowHeader)), f.count);
@@ -104,7 +92,7 @@ void readM7() {
 }
 
 void sendTelem() {
-  const sensors::Pose p = sens.pose(), v = sens.poseVelocity(), t = sm.target(), i = pos.integral();
+  const sensors::Pose p = sens.pose(), v = sens.poseVelocity(), t = sm.setpoint(), i = pos.integral();
   const ctrl::PosCTRL::Command& c = sm.command();
   const sensors::Vec3 a = sens.imuAcceleration();
   const sensors::Attitude at = sens.attitude();
@@ -136,7 +124,7 @@ void logChanges() {
   }
   if (sm.state() == state) return;
   char line[96];
-  if (state == ctrl::StateMachine::TAKEOFF && !fc.armed()) {
+  if (state == ctrl::StateMachine::SPINUP && !fc.armed()) {
     snprintf(line, sizeof(line), "HOVER: arming refused, blockers 0x%lx", (unsigned long)fc.armBlockers());
     m7.log(line);
   }
@@ -158,6 +146,8 @@ void setup() {
 void loop() {
   readM7();
 
+  // hover: up to HOVER, then hold the point it reached (a trajectory would be sm.origin() + its offset)
+  sm.setTarget(sm.state() == ctrl::StateMachine::FLY ? sm.origin() : HOVER);
   sm.step(shared::nowUs());
   logChanges();
 

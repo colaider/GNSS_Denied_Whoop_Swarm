@@ -15,7 +15,7 @@ namespace comm {
 
 class WifiLink : public Link {
  public:
-  static constexpr size_t MAX_DATAGRAM = 1472;   // one Ethernet frame
+  static constexpr size_t MAX_DATAGRAM = 508;    // WiFiUDP's send buffer (WIFI_UDP_BUFFER_SIZE): longer ones went out cut, CRC failed on the PC
 
   WifiLink(const char* ssid, const char* pass, bool ap, uint16_t port)
       : ssid_(ssid), pass_(pass), ap_(ap), port_(port) {}

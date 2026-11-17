@@ -6,6 +6,9 @@
 
 namespace ctrl {
 
+// 'sm' prefix: sketches include several .cpp files into one compile unit
+static float smClamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
 StateMachine::StateMachine(sensors::Sensors& sens, drone::Betaflight& fc, PosCTRL& pos, const SMConfig& cfg) : sens_(sens), fc_(fc), pos_(pos), cfg_(cfg) {}
 
 bool StateMachine::begin() {
@@ -14,9 +17,8 @@ bool StateMachine::begin() {
   return sens_.begin();
 }
 
-
 const char* StateMachine::stateName() const {
-  static const char* const names[] = {"BOOT", "READY", "TAKEOFF", "FLY", "SAFETY", "LAND"};
+  static const char* const names[] = {"BOOT", "READY", "SPINUP", "CLIMB", "FLY", "SAFETY", "LAND"};
   return names[state_];
 }
 
@@ -33,121 +35,140 @@ bool StateMachine::calibrate() {
 bool StateMachine::start() {
   heard();
   if (state_ != READY || !calibrated_) return false;
-  calibrated_ = false;                             // the next flight calibrates again
-  go(TAKEOFF);
+  calibrated_ = false; go(SPINUP);
   return true;
 }
-void StateMachine::land() { heard(); if (state_ == TAKEOFF || state_ == FLY) go(LAND); }
+void StateMachine::land() { heard(); if (state_ == SPINUP || state_ == CLIMB || state_ == FLY) go(LAND); }
 void StateMachine::kill() { heard(); fc_.disarm(); if (state_ != BOOT) go(READY); }
-void StateMachine::setTarget(const sensors::Pose& target, const sensors::Pose& vel, const sensors::Pose& acc) { heard(); if (state_ != FLY) return; target_ = target; tVel_ = vel; tAcc_ = acc; }
+void StateMachine::setTarget(const sensors::Pose& target, const sensors::Pose& vel, const sensors::Pose& acc) { target_ = target; tVel_ = vel; tAcc_ = acc; }
 
+// entry actions only
 void StateMachine::go(State s) {
   const sensors::Pose p = sens_.pose();
   switch (s) {
     case READY:
       fc_.disarm();
+      cmd_ = PosCTRL::Command{};
       break;
 
-    case TAKEOFF:                                  // setpoint: above where it stands (x 0, y 0, yaw 0 after calibration)
-      pos_.reset();
-      target_ = p;
-      target_.z = cfg_.hoverHeight;
+    case SPINUP:
       fc_.arm();
+      thr_ = cfg_.spinupFrom * pos_.config().throttleHover;
+      break;
+
+    case CLIMB:                                    
+      pos_.reset();
+      sp_ = p;                                     
+      break;
+
+    case FLY:                                      
+      origin_ = sp_;
       break;
 
     case SAFETY:
-
-    case LAND:                                     // setpoint start: where it is now, yaw kept
-      target_.x = p.x;
-      target_.y = p.y;
-      target_.z = p.z;
+    case LAND:                                     
+      sp_.x = p.x;  sp_.y = p.y;  sp_.z = p.z;
       break;
-   
+
     default: break;
   }
-
-  tVel_ = sensors::Pose(); tAcc_ = sensors::Pose();
-  if (s == READY) cmd_ = PosCTRL::Command{};
-  if (s == READY || s == TAKEOFF) xyOn_ = false;
-  
-  if (s == SAFETY && state_ != SAFETY) {
-    normalTiltDeg_ = pos_.config().maxTiltDeg;
-    pos_.config().maxTiltDeg = cfg_.safetyTiltDeg;
-
-  } else if (s != SAFETY && state_ == SAFETY) {
-    pos_.config().maxTiltDeg = normalTiltDeg_;
-  }
-
-  state_ = s; enterUs_ = now_; enterZ_ = p.z; heardUs_ = now_;                                
+  spVel_ = spAcc_ = sensors::Pose();
+  if (s == READY || s == SPINUP) xyOn_ = false;
+  if ((s == SAFETY) != (state_ == SAFETY)) pos_.config().maxTiltDeg = s == SAFETY ? cfg_.safetyTiltDeg : normalTiltDeg_;
+  state_ = s; enterUs_ = now_; enterZ_ = p.z; heardUs_ = now_;
 }
 
 
 void StateMachine::step(uint32_t nowUs) {
-  const float dt = now_ ? (int32_t)(nowUs - now_) * 1e-6f : 0.0f;
-  now_ = nowUs;
-  fc_.update(nowUs);
-
-  if (!transitions()) return;      // 1. change state if needed. false: motors off, nothing to control
-  setpoint(dt);                    // 2. where the drone should be now: target_, tVel_
-  control(dt);                     // 3. controller -> FC
-}
-
-// 1. state changes only
-bool StateMachine::transitions() {
-  const bool flying = state_ == TAKEOFF || state_ == FLY || state_ == SAFETY || state_ == LAND;
-  if (flying && !fc_.armed() && !fc_.arming()) { go(READY); return false; }
-  const bool lost = cfg_.linkTimeoutMs && (uint32_t)(now_ - heardUs_) > cfg_.linkTimeoutMs * 1000UL;
+  dt_ = now_ ? (int32_t)(nowUs - now_) * 1e-6f : 0.0f;
+  now_ = nowUs; fc_.update(nowUs);
+  const sensors::Pose p = sens_.pose();
+  const float v = fc_.batteryV();
+  if (cfg_.hoverThrottleV > 0.0f && v > 5.0f) {    // hover throttle from the battery (0 V: not read yet)
+    vBat_ = vBat_ > 0.0f ? vBat_ + (v - vBat_) * fminf(dt_ / cfg_.batteryTauS, 1.0f) : v;
+    pos_.config().throttleHover = cfg_.hoverThrottleV / vBat_;
+  }
+  const float hover = pos_.config().throttleHover;
 
   switch (state_) {
     case BOOT:
       if (fc_.linkReady() && fc_.setupModes(true)) go(READY);
-      return false;
+      break;
 
     case READY:
-      return false;
+      break;
 
-    case TAKEOFF:
-      if (!fc_.armed()) return false;              // arm sequence running: the FC class holds throttle low
-      if (lost) go(SAFETY);
-      else if (fabsf(sens_.pose().z - cfg_.hoverHeight) < cfg_.reachedM) go(FLY);
-      return true;
+    case SPINUP:                                   
+      if ((uint32_t)(now_ - enterUs_) > (uint32_t)(cfg_.spinupMaxS * 1e6f)) { go(LAND); break; }   // never lifted off
+      if (!fc_.armed()) { thr_ = cfg_.spinupFrom * hover; break; }
+      thr_ = fminf(thr_ + cfg_.spinupRate * dt_, cfg_.spinupMax * hover);
+      if (p.z > enterZ_ + cfg_.liftoffM) go(CLIMB);
+      break;
 
-    case FLY:
-      if (lost) go(SAFETY);
-      return true;
+    case CLIMB: {                                  // setpoint z towards the target's z at climbRate
+      const float tz = fminf(target_.z, cfg_.maxHeightM), step = cfg_.climbRate * dt_;
+      const float d = smClamp(tz - sp_.z, -step, step);
+      sp_.z += d;
+      spVel_.z = dt_ > 0.0f ? d / dt_ : 0.0f;
+      if (sp_.z == tz && fabsf(p.z - tz) < cfg_.reachedM) go(FLY);   // the setpoint got there, and so did the drone
+      break;
+    }
+
+    case FLY: {                                    // setpoint towards the target, in the box, at most maxSpeed
+      sensors::Pose t = target_;
+      t.x = smClamp(t.x, origin_.x - cfg_.maxDistM, origin_.x + cfg_.maxDistM);
+      t.y = smClamp(t.y, origin_.y - cfg_.maxDistM, origin_.y + cfg_.maxDistM);
+      t.z = smClamp(t.z, 0.0f, cfg_.maxHeightM);
+      const sensors::Pose d = t - sp_;
+      const float dist = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z), step = cfg_.maxSpeed * dt_;
+      if (dist <= step) {
+        sp_ = t;  spVel_ = tVel_;  spAcc_ = tAcc_;
+      } else {                                     // the target jumped: follow it at maxSpeed
+        sp_ += d * (step / dist);
+        spVel_ = d * (cfg_.maxSpeed / dist);
+        spAcc_ = sensors::Pose();
+        sp_.yaw = t.yaw;  spVel_.yaw = 0.0f;
+      }
+      break;
+    }
 
     case SAFETY:
-    case LAND: {
-      const float downS = fmaxf(enterZ_, 0.0f) / downRate() + cfg_.landExtraS;   // by time: ToF is unreliable near the floor
-      if ((uint32_t)(now_ - enterUs_) > (uint32_t)(downS * 1e6f)) { go(READY); return false; }
-      return true;
-    }
+    case LAND:
+      sp_.z -= downRate() * dt_;
+      spVel_.z = -downRate();
+      if ((uint32_t)(now_ - enterUs_) > (uint32_t)((fmaxf(enterZ_, 0.0f) / downRate() + cfg_.landExtraS) * 1e6f)) go(READY);
+      break;
   }
-  return false;
+
+  const bool lost = cfg_.linkTimeoutMs && (uint32_t)(now_ - heardUs_) > cfg_.linkTimeoutMs * 1000UL;
+  if (flying() && !fc_.armed() && !fc_.arming()) go(READY); 
+  if (lost && (state_ == SPINUP || state_ == CLIMB || state_ == FLY)) go(SAFETY);
+  sens_.takeoff(state_ == SPINUP || state_ == CLIMB);
+  if (flying()) control();
 }
 
-// 2. the setpoint. Set in go(): TAKEOFF = hoverHeight above the start, SAFETY / LAND = where it is.
-// Only LAND / SAFETY move it (down); TAKEOFF / FLY keep it (or setTarget() in FLY)
-void StateMachine::setpoint(float dt) {
-  if (state_ == SAFETY || state_ == LAND) {        // go down, x / y / yaw held
-    target_.z -= downRate() * dt;
-    tVel_.z = -downRate();
-  }
-}
 
-// 3. the controller. x / y only once the camera has tracked xyAfterS in a row (near the floor it sees
-// nothing, logs 03.11: under 10 cm ~1-25% of frames); x / y target = where it is then. Before, and
-// whenever the camera is LOST: roll / pitch 0, Betaflight keeps it level, height control only.
-void StateMachine::control(float dt) {
-  const sensors::Pose p = sens_.pose();
+void StateMachine::control() {
   if (sens_.horizontalFix() != sensors::Fix::TRACKING) camBadUs_ = now_;
+  if (state_ == SPINUP) {
+    if (!fc_.armed()) return;
+    cmd_ = PosCTRL::Command{};
+    cmd_.throttle = thr_;
+    fc_.setAttitude(0.0f, 0.0f, 0.0f, thr_);
+    return;
+  }
+
+  const sensors::Pose p = sens_.pose();
   if (!xyOn_ && (uint32_t)(now_ - camBadUs_) >= (uint32_t)(cfg_.xyAfterS * 1e6f)) {
     xyOn_ = true;
-    target_.x = p.x;  target_.y = p.y;
+    origin_.x += p.x - sp_.x;  origin_.y += p.y - sp_.y;
+    sp_.x = p.x;  sp_.y = p.y;
   }
   if (sens_.horizontalFix() == sensors::Fix::LOST) xyOn_ = false;
+  if ((state_ == LAND || state_ == SAFETY) && sp_.z < cfg_.levelBelowM) xyOn_ = false;
 
-  cmd_ = pos_.update(p, sens_.poseVelocity(), target_, dt, tVel_, tAcc_);
+  cmd_ = pos_.update(p, sens_.poseVelocity(), sp_, dt_, spVel_, spAcc_);
+  if (state_ == CLIMB) cmd_.throttle = fminf(cmd_.throttle, cfg_.climbThrottleMax * pos_.config().throttleHover);
   if (!xyOn_) {
     cmd_.rollDeg = cmd_.pitchDeg = 0.0f;
     pos_.resetXY();

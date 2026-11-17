@@ -181,11 +181,11 @@ void Betaflight::disarm() {
   sendRc();                                        // now, not at the next RC period
 }
 
-void Betaflight::command(float r, float p, float y, float t) {
-  stick_[0] = bfClamp(r, -1.0f, 1.0f);
-  stick_[1] = bfClamp(p, -1.0f, 1.0f);
-  stick_[2] = bfClamp(y, -1.0f, 1.0f);
-  if (!armStage_) stick_[3] = bfClamp(t, 0.0f, 1.0f);   // arming keeps the throttle low
+void Betaflight::command(float r, float p, float y, float t) {   // NaN (passes the clamp, became 0 us): level, last throttle
+  stick_[0] = isfinite(r) ? bfClamp(r, -1.0f, 1.0f) : 0.0f;
+  stick_[1] = isfinite(p) ? bfClamp(p, -1.0f, 1.0f) : 0.0f;
+  stick_[2] = isfinite(y) ? bfClamp(y, -1.0f, 1.0f) : 0.0f;
+  if (!armStage_ && isfinite(t)) stick_[3] = bfClamp(t, 0.0f, 1.0f);   // arming keeps the throttle low
   cmdUs_ = now_;
   haveCmd_ = true;
 }

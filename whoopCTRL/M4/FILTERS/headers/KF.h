@@ -97,6 +97,7 @@ class VerticalKF : public DelayedKF<3, 2, 48> {     // u = [az, k]; 48 steps = 1
   int updateHeight(uint32_t tUs, float z, float std);
 
   void zeroVelocity(uint32_t tUs, float std);                 // vz = 0 +- std (no ToF for long / still)
+  void loosenBias(float std) { loosen(BZ, std * std); }       // the bias may be anything +- std now (motors spinning up)
   bool setHeight(uint32_t tUs, float z, float std);           // the height IS z (ToF back after LOST)
 
   float innovation() const { return innov_; }

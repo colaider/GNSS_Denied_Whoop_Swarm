@@ -87,6 +87,7 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
       if (imu_.ready() && h > range * cosf(cfg_.tofMaxTiltDeg * 0.017453293f)) {
         const uint32_t t = tof_.last().tUs;
         fusDbg_.tofStd = cfg_.tofStd + cfg_.tofStdRange * range;
+        if (takeoff_) vkf_.loosenBias(cfg_.takeoffBiasStd);
         if (vFix_ == Fix::LOST) {                  // back after long: take it as it is
           fusDbg_.tofResult = vkf_.setHeight(t, h, fusDbg_.tofStd) ? 3 : -1;
         } else {
@@ -106,7 +107,7 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
     // the ToF reading must be from about the time of the frames (signed: it may be newer)
     const ToFReading& tof = tof_.lastValid();
     const int32_t tofAge = (int32_t)(flow->t1Us - tof.tUs);
-    const bool tofOk = tof.valid && tofAge < 200000 && tofAge > -200000;
+    const bool tofOk = tof.valid && tof.rangeM > 0.0f && tofAge < 200000 && tofAge > -200000;   // velocity = flow * range / ...
 
     // how much closer the floor got between the two frames: the ToF trend over the frame time
     float rate = 0.0f;

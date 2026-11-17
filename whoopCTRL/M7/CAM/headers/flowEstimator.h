@@ -15,13 +15,20 @@ struct FlowConfig {
   int   window        = 9;       // LK window, pixels (odd)
   float quality       = 0.005f;   // GFTT: keep corners >= quality * best corner
   float minDistance   = 4.0f;    // GFTT: spacing between points, pixels
-  int   maxPoints     = 50;      // budget: points alive in the whole image. Tracking cost grows with it:                   
+  float minScore      = 250.0f;  // GFTT: weakest corner taken (smallest eigenvalue). Noise alone at full
+                                 // gain scores ~100-200; 500 found too few corners in dim light
+  int   border        = 5;       // GFTT: no new points this close to the edge (10: only the middle 64 % got points)
+  int   sectors       = 4;       // sector grid sectors x sectors, budget shared between them (2: points bunched
+                                 // in each quarter, parts of the image empty)
+  int   maxPoints     = 64;      // budget: points alive in the whole image (ccv::Replenish::MAX_POINTS). Tracking cost grows with it
   int   lkIterations  = 5;       // LK iterations per pyramid level at most (was 10)
   int   ransacIters   = 20;      // RANSAC random tries
-  float inlierPx      = 0.4f;    // RANSAC: largest error that still counts as inlier
+  float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier (0.4: climbing, 25 tracked
+                                 // but only 3-8 inside, no flow until hover height)
   int   minInliers    = 6;       // fewer -> the result is not valid
-  float refillBelow   = 0.75f;   // search a sector for new points when below this share of its quota
-  int   searchesPerFrame = 1;    // most sectors searched per frame (the search is the slow part)
+  float refillBelow   = 1.0f;    // search a sector for new points when below this share of its quota (0.75: refilled too late)
+  int   searchesPerFrame = 5;    // most sectors searched per frame (the search is the slow part; a 4x4 sector costs a
+                                 // quarter of a 2x2 one: 5 ~ the old 2 searched quarters)
 };
 
 struct FlowTiming {              // where the last update() spent its time, microseconds
