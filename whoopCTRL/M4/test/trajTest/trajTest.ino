@@ -178,6 +178,9 @@ void sendTelem() {
   m.ax = a.x; m.ay = a.y; m.az = a.z;
   m.attRoll = at.roll * 57.29578f;  m.attPitch = at.pitch * 57.29578f;
   m.battery = fc.batteryV();
+  const sensors::ToFReading& tr = sens.tofReading();
+  m.tofRange = tr.rangeM;  m.tofHeight = sens.height();  m.tofSignal = tr.signalMcps;
+  m.tofValid = tr.valid;  m.tofStatus = tr.status;  m.floorSteps = (uint16_t)sens.vertical().steps();
   m7.send(msg::PKT_HOVER_TELEM, &m, sizeof(m));
 }
 

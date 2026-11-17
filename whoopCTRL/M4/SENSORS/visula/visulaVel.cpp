@@ -20,6 +20,19 @@ visualVel::vw visualVel::linReg(const float * x, const float * y, int n){
 
     return out;
 }
+void visualVel::undistort(float u, float v, const msg::FlowHeader& flow, float& x, float& y) {
+    const float* k = calib::CAM_DIST;                  // OpenCV order: k1, k2, p1, p2, k3
+    const float xd = (u - flow.cx) / flow.fx, yd = (v - flow.cy) / flow.fy;
+    x = xd; y = yd;
+    for (int i = 0; i < 5; i++) {                      // the model maps undistorted -> distorted: inverted by iterating
+        const float r2  = x*x + y*y;
+        const float rad = 1.0f + r2*(k[0] + r2*(k[1] + r2*k[4]));
+        const float tx  = 2.0f*k[2]*x*y + k[3]*(r2 + 2.0f*x*x);
+        const float ty  = k[2]*(r2 + 2.0f*y*y) + 2.0f*k[3]*x*y;
+        x = (xd - tx) / rad; y = (yd - ty) / rad;
+    }
+}
+
 // (x/f)*Z
 
 visualVel::visualVelocityVector visualVel::estimateVelocity(uint32_t tUs, const sensors::Attitude& att, const sensors::Vec3& rot, const sensors::ToFReading& tof, float dZ, const msg::FlowHeader& flow, const msg::PointMsg* pts, int n){
@@ -36,13 +49,16 @@ visualVel::visualVelocityVector visualVel::estimateVelocity(uint32_t tUs, const 
     for(int i=0;i<n;i++){
         if (!pts[i].inlier) continue;                      // RANSAC said: not moving with the floor
 
-        // the point halfway through its motion, from the optical centre, as tan of its angle (x/f)
-        float xn = (pts[i].x - pts[i].dx*0.5f - flow.cx) / flow.fx; float yn = (pts[i].y - pts[i].dy*0.5f - flow.cy) / flow.fy;
+        // where the point was and is, lens distortion taken out, as tan of its angle (x/z); xn: halfway
+        float x0, y0, x1, y1;
+        undistort(pts[i].x - pts[i].dx, pts[i].y - pts[i].dy, flow, x0, y0);
+        undistort(pts[i].x, pts[i].y, flow, x1, y1);
+        const float xn = 0.5f * (x0 + x1), yn = 0.5f * (y0 + y1);
 
         // derotation: the flow the gyro rotation alone makes (small angles), 1 + xn*xn = sec^2 of the point's angle
         // height change: closer to the floor (dZ < 0) every point moves out from the centre, delta p = -p*dZ/Z
-        sumVx += -((pts[i].dx / flow.fx) - (xn*yn*rot.x - (1.0f + xn*xn)*rot.y + yn*rot.z) + xn*dZ/Z) * Z / dt;
-        sumVy += -((pts[i].dy / flow.fy) - ((1.0f + yn*yn)*rot.x - xn*yn*rot.y - xn*rot.z) + yn*dZ/Z) * Z / dt;
+        sumVx += -((x1 - x0) - (xn*yn*rot.x - (1.0f + xn*xn)*rot.y + yn*rot.z) + xn*dZ/Z) * Z / dt;
+        sumVy += -((y1 - y0) - ((1.0f + yn*yn)*rot.x - xn*yn*rot.y - xn*rot.z) + yn*dZ/Z) * Z / dt;
         used++;
     }
     if (used == 0) return out;

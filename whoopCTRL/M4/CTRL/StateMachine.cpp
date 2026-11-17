@@ -8,6 +8,7 @@ namespace ctrl {
 
 // 'sm' prefix: sketches include several .cpp files into one compile unit
 static float smClamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static const float SM_DEG = 0.01745329f;           // rad per degree
 
 StateMachine::StateMachine(sensors::Sensors& sens, drone::Betaflight& fc, PosCTRL& pos, const SMConfig& cfg) : sens_(sens), fc_(fc), pos_(pos), cfg_(cfg) {}
 
@@ -28,6 +29,13 @@ bool StateMachine::calibrate() {
   calibrated_ = sens_.startup();                   // blocks 2 s
   now_ = shared::nowUs();                          // fresh time for the FC class after the block
   fc_.update(now_);
+  if (calibrated_ && fc_.linkOk()) {               // still on the ground: Betaflight's roll / pitch vs ours
+    const drone::FcAttitude a = fc_.attitude();
+    const sensors::Attitude n = sens_.attitude();
+    refRollOff_  = n.roll  - a.rollDeg  * SM_DEG;
+    refPitchOff_ = n.pitch - a.pitchDeg * SM_DEG;
+    refOk_ = true;
+  }
   heard();
   return calibrated_;
 }
@@ -143,7 +151,11 @@ void StateMachine::step(uint32_t nowUs) {
   const bool lost = cfg_.linkTimeoutMs && (uint32_t)(now_ - heardUs_) > cfg_.linkTimeoutMs * 1000UL;
   if (flying() && !fc_.armed() && !fc_.arming()) go(READY); 
   if (lost && (state_ == SPINUP || state_ == CLIMB || state_ == FLY)) go(SAFETY);
-  sens_.takeoff(state_ == SPINUP || state_ == CLIMB);
+  sens_.flying(flying());                          // height from the ToF while the motors shake the accelerometer
+  if (refOk_ && fc_.linkOk()) {                    // roll / pitch drift corrected by Betaflight's attitude
+    const drone::FcAttitude a = fc_.attitude();
+    sens_.attitudeReference(a.rollDeg * SM_DEG + refRollOff_, a.pitchDeg * SM_DEG + refPitchOff_, now_);
+  }
   if (flying()) control();
 }
 

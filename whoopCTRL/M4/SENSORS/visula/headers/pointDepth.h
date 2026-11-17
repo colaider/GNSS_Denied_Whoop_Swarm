@@ -36,7 +36,7 @@ struct PointDepthConfig {
 
 class PointDepth {
  public:
-  static constexpr int MAXP = 64;
+  static constexpr int MAXP = 96;               // = the most points a flow packet carries (msg::FLOW_MAX_POINTS)
 
   struct Point {
     uint16_t id;

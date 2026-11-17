@@ -22,7 +22,7 @@ namespace comm {
 class CoreLink : public Link {
  public:
   static constexpr size_t CHUNK   = 256;    // largest RPC message we send (the limit is ~496)
-  static constexpr size_t RX_SIZE = 4096;   // receive buffer, bytes (~2 full flow packets + commands)
+  static constexpr size_t RX_SIZE = 8192;   // receive buffer, bytes (~4 full flow packets of 96 points + commands)
 
   bool        begin() override;
   size_t      write(const uint8_t* data, size_t len) override;

@@ -47,19 +47,32 @@ bool Trajectory::update(uint32_t nowUs) {
     return true;
   }
 
+  eval(t, p_, v_, a_);
+  sensors::Pose pl, vl, al;                                   // the acceleration leadS ahead: the tilt arrives
+  if (leadS > 0.0f && eval(t + leadS, pl, vl, al)) a_ = al;   // that much later (beyond the points: as at t)
+  state_ = PLAYING;
+  return true;
+}
+
+bool Trajectory::eval(float t, sensors::Pose& p, sensors::Pose& v, sensors::Pose& acc) const {
+  int i = 0;
+  while (i + 1 < n_ && pts_[i + 1].tMs * 1e-3f <= t) i++;
+  if (i + 1 >= n_ || t < pts_[i].tMs * 1e-3f) return false;
+
   // cubic Hermite: through both points with their velocities
-  const msg::TrajPoint& b = pts_[1];
+  const msg::TrajPoint& a = pts_[i];
+  const msg::TrajPoint& b = pts_[i + 1];
   const float h = (b.tMs - a.tMs) * 1e-3f, s = (t - a.tMs * 1e-3f) / h, s2 = s * s, s3 = s2 * s;
   const sensors::Pose p0{a.x, a.y, a.z, 0.0f}, p1{b.x, b.y, b.z, 0.0f};
   const sensors::Pose m0 = sensors::Pose{a.vx, a.vy, a.vz, 0.0f} * h, m1 = sensors::Pose{b.vx, b.vy, b.vz, 0.0f} * h;
-  p_ = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m0 + (3 * s2 - 2 * s3) * p1 + (s3 - s2) * m1;
-  v_ = ((6 * s2 - 6 * s) * p0 + (3 * s2 - 4 * s + 1) * m0 + (6 * s - 6 * s2) * p1 + (3 * s2 - 2 * s) * m1) / h;
-  a_ = ((12 * s - 6) * p0 + (6 * s - 4) * m0 + (6 - 12 * s) * p1 + (6 * s - 2) * m1) / (h * h);
+  p   = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * m0 + (3 * s2 - 2 * s3) * p1 + (s3 - s2) * m1;
+  v   = ((6 * s2 - 6 * s) * p0 + (3 * s2 - 4 * s + 1) * m0 + (6 * s - 6 * s2) * p1 + (3 * s2 - 2 * s) * m1) / h;
+  acc = ((12 * s - 6) * p0 + (6 * s - 4) * m0 + (6 - 12 * s) * p1 + (6 * s - 2) * m1) / (h * h);
 
   const float dYaw = sensors::wrapPi(b.yaw - a.yaw);          // yaw: straight from one point to the next
-  p_.yaw = sensors::wrapPi(a.yaw + s * dYaw);
-  v_.yaw = dYaw / h;
-  state_ = PLAYING;
+  p.yaw = sensors::wrapPi(a.yaw + s * dYaw);
+  v.yaw = dYaw / h;
+  acc.yaw = 0.0f;
   return true;
 }
 

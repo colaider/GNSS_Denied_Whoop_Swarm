@@ -65,12 +65,12 @@ struct ImuConfig {
                                    // passes 1 g for an instant at a tilted direction, and taking
                                    // it tilted the attitude by ~8 deg (gravity leak 1.4 m/s^2)
   // Flying it is never calm: the motors' vibration shifts |acc| to ~0.65 g, so roll / pitch ran on the
-  // gyro alone and drifted 0.15 deg/s (roll -12 deg after 80 s, the drone level; z got bad with it,
-  // log 17.11). In flight the accelerometer is averaged over accelAvgS (vibration cancels, the average
-  // turned with the gyro) and pulls roll / pitch slowly: a 1.5 s move barely moves them.
-  float accelFlightTrust = 0.2f;   // 1/s
-  float accelAvgS  = 0.5f;
-  float accelAvgMinG = 0.4f, accelAvgMaxG = 1.6f;   // the average used only within these
+  // gyro alone and drifted 0.15 deg/s (roll -12 deg after 80 s, the drone level; z got bad with it).
+  // The accelerometer averaged in flight bent roll / pitch on every move (z +4.7 cm/s, log 17.11 14:2x).
+  // So in flight roll / pitch are pulled towards a reference instead: Betaflight's own attitude
+  // (setReference(), its offset to ours found on the ground). The gyro still does the fast part.
+  float refTrust   = 0.5f;         // 1/s
+  uint32_t refMaxAgeUs = 300000;   // an older reference is not used (FC link lost: gyro alone)
   float maxDtS     = 0.05f;        // larger gaps between samples are not integrated
 };
 
@@ -107,6 +107,9 @@ class IMU {
   // The estimator replaces the drifting velocity with its corrected one.
   void setVelocity(float vx, float vy);
 
+  // Roll / pitch (rad) known from elsewhere at tUs (Betaflight's attitude): used while not calm.
+  void setReference(float roll, float pitch, uint32_t tUs) { refRoll_ = roll; refPitch_ = pitch; refUs_ = tUs; haveRef_ = true; }
+
   // Rotates v from the body frame into the world frame for the attitude a.
   static Vec3 rotate(const Attitude& a, const Vec3& v);
 
@@ -125,8 +128,9 @@ class IMU {
   ImuSample last_;
   bool      haveLast_ = false;                  // a previous sample exists (for dt)
   float     calmS_    = 0.0f;                   // how long the accelerometer has been usable
-  Vec3      accAvg_;                            // accelerometer average (accelAvgS), body frame, g
-  bool      haveAvg_  = false;
+  float     refRoll_ = 0.0f, refPitch_ = 0.0f;   // setReference()
+  uint32_t  refUs_   = 0;
+  bool      haveRef_ = false;
   bool      started_  = false;
 };
 

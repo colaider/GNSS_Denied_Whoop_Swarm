@@ -38,7 +38,7 @@ START_V = 7.6                           # battery (2S, under load) needed to sta
                                         # 60 cm). Not checked later: it sags to ~7.2 V on a full one. The camera must
                                         # see the floor (CAM_OK) all along
 LIMIT = {"kp": (0.5, 8.0), "kd": (0.5, 6.0)}   # never outside, and never beyond 0.5x .. 2x the start
-START = {"kp": [4.5, 4.5, 3.0, 3.0], "kd": [3.4, 3.4, 3.5, 0.0], "ki": [0.9, 0.9, 1.0, 0.0]}   # PosCTRL.h PosConfig
+START = {"kp": [4.5, 4.5, 4.0, 3.0], "kd": [3.4, 3.4, 4.0, 0.0], "ki": [0.9, 0.9, 2.5, 0.0]}   # PosCTRL.h PosConfig
 FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autoTune_gains.json")
 
 

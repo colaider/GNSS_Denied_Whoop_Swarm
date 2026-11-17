@@ -94,9 +94,9 @@ struct __attribute__((packed)) PointMsg {        // one tracked point
 };
 static_assert(sizeof(PointMsg) == 21, "Python '<2H4fB'");
 
-// The most points one flow packet carries, and its size: 59 + 64 * 21 = 1403 bytes.
+// The most points one flow packet carries, and its size: 59 + 96 * 21 = 2075 bytes.
 // Every receiver must accept a packet this big (comm::MAX_RX_PAYLOAD).
-constexpr int      FLOW_MAX_POINTS = 64;
+constexpr int      FLOW_MAX_POINTS = 96;
 constexpr uint32_t FLOW_MAX_BYTES  = sizeof(FlowHeader) + FLOW_MAX_POINTS * sizeof(PointMsg);
 
 // ---------------------------------------------------------------- trajectory
@@ -280,8 +280,14 @@ struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 
   float    ax, ay, az;                           // IMU world acceleration (gravity removed), m/s^2
   float    attRoll, attPitch;                    // measured attitude, deg (does Betaflight follow?)
   float    battery;                              // V
+  // the ToF as it came (is a height jump the sensor, the tilt correction or the drone?)
+  float    tofRange;                             // last reading along the beam, m (valid or not)
+  float    tofHeight;                            // last valid one, tilt corrected: the height filter's input, m
+  float    tofSignal;                            // return signal, MCPS (weak: dark / far / grazing)
+  uint8_t  tofValid, tofStatus;                  // our check / the sensor's range status (0 = ok)
+  uint16_t floorSteps;                           // height filter jumps to the ToF so far (refused 3x in a row)
 };
-static_assert(sizeof(HoverTelem) == 106, "Python '<I2B25f'");
+static_assert(sizeof(HoverTelem) == 122, "Python '<I2B28f2BH'");
 
 // ---------------------------------------------------------------- gain tuning
 struct __attribute__((packed)) Gains {           // PKT_GAINS payload: PosCTRL gains, x y z yaw each

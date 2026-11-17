@@ -28,11 +28,14 @@ void PointDepth::update(const Sensors& s, const msg::FlowHeader& f, const msg::P
       break;
     }
 
+    float x0, y0, x1, y1;                       // where it was and is, lens distortion out, x / z
+    visualVel::undistort(q.x - q.dx, q.y - q.dy, f, x0, y0);
+    visualVel::undistort(q.x, q.y, f, x1, y1);
     if (moved) {                                // this pair's parallax: m = g / Z
-      const float xn = (q.x - 0.5f * q.dx - f.cx) / f.fx, yn = (q.y - 0.5f * q.dy - f.cy) / f.fy;
+      const float xn = 0.5f * (x0 + x1), yn = 0.5f * (y0 + y1);
       const Vec3& r = c.rot;
-      const float mx = q.dx / f.fx - (xn * yn * r.x - (1.0f + xn * xn) * r.y + yn * r.z);
-      const float my = q.dy / f.fy - ((1.0f + yn * yn) * r.x - xn * yn * r.y - xn * r.z);
+      const float mx = (x1 - x0) - (xn * yn * r.x - (1.0f + xn * xn) * r.y + yn * r.z);
+      const float my = (y1 - y0) - ((1.0f + yn * yn) * r.x - xn * yn * r.y - xn * r.z);
       const float gx = -(tx + xn * c.dZ), gy = -(ty + yn * c.dZ);
       const float gg = gx * gx + gy * gy;
       if (gg > 0.0f) {
@@ -50,7 +53,7 @@ void PointDepth::update(const Sensors& s, const msg::FlowHeader& f, const msg::P
 
     Point& o = out_[m];                         // into the start frame: camera ray x depth, turned like the drone
     const float z = 1.0f / t.rho;
-    const Vec3 cam{(q.x - f.cx) / f.fx * z, (q.y - f.cy) / f.fy * z, z};
+    const Vec3 cam{x1 * z, y1 * z, z};
     const Vec3 w = IMU::rotate(att, s.toBody(cam));
     o.id = q.id;  o.x = q.x;  o.y = q.y;
     o.depth = z;

@@ -89,11 +89,12 @@ struct SensorsConfig {
   float stillG      = 0.03f;
   float stillS      = 0.3f;
   float stillVelStd = 0.02f;
-  // takeoff (takeoff(true): SPINUP, CLIMB): the motors shift the vertical accelerometer by -4..-8 m/s^2
-  // within 0.2 s (log 17.11 12:06). Learned on the ground as ~0, the filter then saw a fall, refused the
-  // ToF as outliers, forced it back: height 11 -> 1 -> 30 cm, the climb shot to 97 cm. So the bias is
-  // kept this uncertain before every ToF reading: the height and its rate come from the ToF.
-  float takeoffBiasStd = 3.0f;
+  // flying (flying(true): SPINUP .. LAND): the motors shift the vertical accelerometer by -4..-8 m/s^2
+  // within 0.2 s and it keeps moving with throttle and vibration (log 17.11 12:06: the filter saw a fall,
+  // refused the ToF, forced it back: height 11 -> 1 -> 30 cm, the climb shot to 97 cm; in flight z
+  // wandered +-15 cm). So the bias is kept this uncertain before every ToF reading: the height and
+  // its rate come from the ToF (2 mm), the accelerometer only adds the fast part.
+  float flyingBiasStd = 3.0f;
 };
 
 // What a filter's measurement does right now (the state machine, see the top).
@@ -154,7 +155,9 @@ class Sensors {
   Fix      horizontalFix() const { return hFix_; }               // camera: TRACKING / COASTING / LOST
   Fix      verticalFix() const { return vFix_; }                 // ToF
   bool     still() const { return still_; }                      // the IMU says: not moving at all
-  void     takeoff(bool on) { takeoff_ = on; }                   // motors spinning up / climbing (see takeoffBiasStd)
+  void     flying(bool on) { flying_ = on; }                     // motors running (see flyingBiasStd)
+  // Roll / pitch from elsewhere (Betaflight's attitude + the offset to ours), rad: corrects the IMU in flight
+  void     attitudeReference(float roll, float pitch, uint32_t tUs) { imu_.setReference(roll, pitch, tUs); }
   float    noiseScale() const { return k_; }                     // the k given to the filters now
   const filters::HorizontalKF& horizontal() const { return hkf_; }   // innovations, counters
   const filters::VerticalKF&   vertical() const { return vkf_; }
@@ -236,7 +239,7 @@ class Sensors {
   Fix      hFix_ = Fix::TRACKING, vFix_ = Fix::TRACKING;
   uint32_t camSeenUs_ = 0, tofSeenUs_ = 0;    // last valid camera velocity (tMid) / ToF height
   uint32_t pseudoUs_  = 0;                    // last made-up measurement (LOST / still)
-  bool     still_     = false, takeoff_ = false;
+  bool     still_     = false, flying_ = false;
   float    stillForS_ = 0.0f;                 // how long the IMU has looked still
   float    k_         = 1.0f;
 };

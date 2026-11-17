@@ -22,10 +22,11 @@ PKT_LOG, PKT_FLOW, PKT_FLIGHT_CMD, PKT_HOVER_TELEM, PKT_FRAME_ROWS = 2, 5, 11, 1
 PKT_SEG, PKT_TRAJ_START = 6, 9
 CMD_HOLD, CMD_LAND, CMD_KILL, CMD_START, CMD_PING, CMD_CALIBRATE = 1, 2, 4, 5, 6, 7
 STATES = ["BOOT", "READY", "SPINUP", "CLIMB", "FLY", "SAFETY", "LAND"]
-TELEM_FMT = "<I2B25f"
+TELEM_FMT = "<I2B28f2BH"                # msg::HoverTelem
 FIELDS = ["tUs", "state", "flags", "x", "y", "z", "yaw", "vx", "vy", "vz", "vyaw",
           "tx", "ty", "tz", "tyaw", "roll", "pitch", "yawRate", "throttle",
-          "ix", "iy", "iz", "ax", "ay", "az", "attRoll", "attPitch", "battery"]
+          "ix", "iy", "iz", "ax", "ay", "az", "attRoll", "attPitch", "battery",
+          "tofRange", "tofHeight", "tofSignal", "tofValid", "tofStatus", "floorSteps"]
 ARMED, CAM_OK, TOF_OK, FC_LINK, CALIBRATED = 1, 2, 4, 8, 16
 FLOW_HDR = struct.Struct("<4I9f3HB")    # msg::FlowHeader
 POINT = struct.Struct("<2H4fB")         # msg::PointMsg
@@ -39,7 +40,7 @@ FLOW_FIELDS = ["t1Us", "seq", "valid", "tracked", "inliers", "rmsPx", "tx", "ty"
 CAM_W, CAM_H = 160, 120                 # camera image (m7Runner crop: the whole 320x240 view, binned 2x2)
 ZOOM = 3                                # camera: 160x120 -> 480x360
 MAP = 400                               # position view, pixels
-MAP_M = 0.5                             # position view: +-0.5 m
+MAP_M = 0.6                             # position view: +-0.6 m (the 40 cm moves fit)
 Z_MAX = 0.3                             # height bar: 0..0.3 m
 VIEW = 400                              # 3D views (attitude, position), pixels
 AZ, EL = math.radians(225), math.radians(25)   # 3D views at start: seen from behind-right (-x, -y), above; drag to turn
@@ -48,7 +49,7 @@ POS_Z = 1.0                             # 3D position view: 0..1 m high
 TRAJ_DT = 0.2                           # trajectory: a point every 0.2 s...
 TRAJ_POINTS = 6                         # ...6 per packet (msg::SEG_MAX_POINTS): 1 s ahead, sent every tick
 TRAJ_DELAY = 0.5                        # s: the drone starts this long after the start packet
-MOVE_M, MOVE_S, STOP_S = 0.15, 1.5, 5.0   # forward 15 cm in 1.5 s, stop 5 s, back, stop 5 s, again
+MOVE_M, MOVE_S, STOP_S = 0.40, 1.5, 5.0   # forward 40 cm in 1.5 s (peak 0.42 m/s, 0.9 m/s^2 ~ 5 deg), stop 5 s, back, again
 
 
 def packet(ptype, payload):

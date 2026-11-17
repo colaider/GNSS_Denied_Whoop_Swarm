@@ -5,6 +5,7 @@
 #include "../../headers/IMU.h"
 #include "../../headers/ToF.h"
 #include "../../../../shared/headers/messages.h"
+#include "../../../../calibartion/camera_calib.h"
 
 class visualVel {
  public:
@@ -20,4 +21,8 @@ class visualVel {
   visualVelocityVector estimateVelocity(uint32_t tUs, const sensors::Attitude& att, const sensors::Vec3& rot, const sensors::ToFReading& tof, float dZ, const msg::FlowHeader& flow, const msg::PointMsg* pts, int n);
 
   vw linReg(const float* x, const float* y, int n);
+
+  // Pixel (u, v) -> normalised (x / z, y / z) with the lens' distortion taken out (calib::CAM_DIST). At the
+  // edges of the full 160x120 view (r ~0.45) the lens stretches motion by up to ~3 %.
+  static void undistort(float u, float v, const msg::FlowHeader& flow, float& x, float& y);
 };

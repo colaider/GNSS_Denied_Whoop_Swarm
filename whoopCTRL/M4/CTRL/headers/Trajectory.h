@@ -14,6 +14,11 @@ class Trajectory {
 public:
     enum State : uint8_t { IDLE, WAITING, PLAYING, EMPTY, HOLD };
 
+    // Acceleration (the feed-forward) taken this far ahead: Betaflight reaches a commanded tilt ~0.2 s
+    // late (log 17.11 15:26, 96-98 % of it), so the moves lagged 4-6 cm and overshot 5-6 cm.
+    // Simulated with that delay: overshoot 2.7 -> 0.4 cm. 0: off.
+    float leadS = 0.2f;
+
     void start(uint16_t id, uint32_t startUs);                 // t = 0 at startUs, old points dropped. Same id again: ignored
     void add(uint16_t id, const msg::TrajPoint* pts, int n);   // points of the started id; repeats replace, any order
     void hold() { if (state_ != IDLE) state_ = HOLD; }          // stop where it is now
@@ -30,6 +35,7 @@ public:
 
 private:
     void drop();                                               // forget the oldest point
+    bool eval(float t, sensors::Pose& p, sensors::Pose& v, sensors::Pose& acc) const;   // the curve at time t; false outside the points
 
     static constexpr int MAX_POINTS = 32;
     msg::TrajPoint pts_[MAX_POINTS];

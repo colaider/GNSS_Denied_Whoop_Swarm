@@ -87,7 +87,7 @@ uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, i
       if (imu_.ready() && h > range * cosf(cfg_.tofMaxTiltDeg * 0.017453293f)) {
         const uint32_t t = tof_.last().tUs;
         fusDbg_.tofStd = cfg_.tofStd + cfg_.tofStdRange * range;
-        if (takeoff_) vkf_.loosenBias(cfg_.takeoffBiasStd);
+        if (flying_) vkf_.loosenBias(cfg_.flyingBiasStd);
         if (vFix_ == Fix::LOST) {                  // back after long: take it as it is
           fusDbg_.tofResult = vkf_.setHeight(t, h, fusDbg_.tofStd) ? 3 : -1;
         } else {

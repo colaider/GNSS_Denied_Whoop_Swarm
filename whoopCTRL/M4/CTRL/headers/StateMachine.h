@@ -77,6 +77,8 @@ private:
     State         state_ = BOOT;
     uint32_t      now_ = 0, enterUs_ = 0, heardUs_ = 0, camBadUs_ = 0;
     float         dt_ = 0.0f, enterZ_ = 0.0f, thr_ = 0.0f, vBat_ = 0.0f;
+    float         refRollOff_ = 0.0f, refPitchOff_ = 0.0f;   // ours - Betaflight's roll / pitch, rad (found in calibrate())
+    bool          refOk_ = false;
     bool          calibrated_ = false, xyOn_ = false;
     float         normalTiltDeg_ = 15.0f;
     sensors::Pose target_, tVel_, tAcc_;   // from setTarget()

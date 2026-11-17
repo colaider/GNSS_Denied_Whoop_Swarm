@@ -120,26 +120,15 @@ void IMU::step(const ImuSample& s) {
     const bool  calm = an > 1.0f - cfg_.accelGate && an < 1.0f + cfg_.accelGate && rate < cfg_.accelGateDps * DEG2RAD;
     calmS_ = calm ? calmS_ + dt : 0.0f;
 
-    // the average: turned with the body first (it stands for a world direction), then the new sample in
-    if (!haveAvg_) { accAvg_ = s.acc; haveAvg_ = true; }
-    const Vec3 g = accAvg_;
-    accAvg_.x -= (wy * g.z - wz * g.y) * dt;
-    accAvg_.y -= (wz * g.x - wx * g.z) * dt;
-    accAvg_.z -= (wx * g.y - wy * g.x) * dt;
-    const float k = fminf(dt / cfg_.accelAvgS, 1.0f);
-    accAvg_.x += (s.acc.x - accAvg_.x) * k;
-    accAvg_.y += (s.acc.y - accAvg_.y) * k;
-    accAvg_.z += (s.acc.z - accAvg_.z) * k;
-    const float avgN = sqrtf(accAvg_.x * accAvg_.x + accAvg_.y * accAvg_.y + accAvg_.z * accAvg_.z);
-
     Vec3 m;                                                                  // measured up, and how much to trust it
     float trust = 0.0f;
     if (calmS_ >= cfg_.accelCalmS) {
       m = {s.acc.x / an, s.acc.y / an, s.acc.z / an};
       trust = cfg_.accelTrust;
-    } else if (rate < cfg_.accelGateDps * DEG2RAD && avgN > cfg_.accelAvgMinG && avgN < cfg_.accelAvgMaxG) {
-      m = {accAvg_.x / avgN, accAvg_.y / avgN, accAvg_.z / avgN};            // flying
-      trust = cfg_.accelFlightTrust;
+    } else if (haveRef_ && (int32_t)(s.tUs - refUs_) < (int32_t)cfg_.refMaxAgeUs) {   // flying: the reference's up
+      const float cp = cosf(refPitch_);
+      m = {-sinf(refPitch_), sinf(refRoll_) * cp, cosf(refRoll_) * cp};
+      trust = cfg_.refTrust;
     }
     if (trust > 0.0f) {
       const float vx = 2.0f * (x * z - w * y);                               // estimated up

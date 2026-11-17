@@ -20,14 +20,16 @@ struct FlowConfig {
   int   border        = 5;       // GFTT: no new points this close to the edge (10: only the middle 64 % got points)
   int   sectors       = 4;       // sector grid sectors x sectors, budget shared between them (2: points bunched
                                  // in each quarter, parts of the image empty)
-  int   maxPoints     = 64;      // budget: points alive in the whole image (ccv::Replenish::MAX_POINTS). Tracking cost grows with it
+  int   maxPoints     = 64;      // budget: points alive in the whole image (<= ccv::Replenish::MAX_POINTS 96). 64 / 5 searches:
+                                 // 99 % inliers, RANSAC 0.14-0.17 px; 96 / 3: weak corners taken, frames skipped -> 82 %,
+                                 // 0.33 px, points less steady, drift (log 17.11 16:27)
   int   lkIterations  = 5;       // LK iterations per pyramid level at most (was 10)
   int   ransacIters   = 20;      // RANSAC random tries
   float inlierPx      = 0.7f;    // RANSAC: largest error that still counts as inlier (0.4: climbing, 25 tracked
                                  // but only 3-8 inside, no flow until hover height)
   int   minInliers    = 6;       // fewer -> the result is not valid
   float refillBelow   = 1.0f;    // search a sector for new points when below this share of its quota (0.75: refilled too late)
-  int   searchesPerFrame = 5;    // most sectors searched per frame (the search is the slow part; a 4x4 sector costs a
+  int   searchesPerFrame = 5;    // most sectors searched per frame (5 at 160x120: up to 40 ms, ~5 % of frames skipped; a 4x4 sector costs a
                                  // quarter of a 2x2 one: 5 ~ the old 2 searched quarters)
 };
 

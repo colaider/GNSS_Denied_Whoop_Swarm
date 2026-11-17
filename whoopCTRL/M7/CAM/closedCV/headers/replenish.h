@@ -34,7 +34,7 @@ namespace ccv {
 
 class Replenish {
  public:
-  static constexpr int MAX_POINTS  = 64;
+  static constexpr int MAX_POINTS  = 96;
   static constexpr int MAX_SECTORS = 16;          // up to a 4 x 4 grid
 
   // gftt:          detector for new points (its minDistance keeps new points apart)
