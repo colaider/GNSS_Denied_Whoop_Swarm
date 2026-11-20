@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hidden Tesseract Reshuffle</title>
+<style>
+:root{--bg:#f6f6f3;--panel:#ffffff;--ink:#1c1c1f;--muted:#6a6a70;--line:#dcdce1;--ghost:#c9c9d1;--accent:#2f6fde;--warn:#d6453d;--ok:#1f9d62;--sheet:rgba(47,111,222,.38)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#131315;--panel:#1c1c1f;--ink:#ececf0;--muted:#9a9aa3;--line:#34343a;--ghost:#4a4a53;--accent:#6d9cff;--warn:#ff6b61;--ok:#4cd391;--sheet:rgba(109,156,255,.42)}}
+:root[data-theme="dark"]{--bg:#131315;--panel:#1c1c1f;--ink:#ececf0;--muted:#9a9aa3;--line:#34343a;--ghost:#4a4a53;--accent:#6d9cff;--warn:#ff6b61;--ok:#4cd391;--sheet:rgba(109,156,255,.42)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:22px;margin:0 0 4px}
+p.lead{margin:0 0 16px;color:var(--muted);max-width:820px}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:700px){.panels{grid-template-columns:1fr}}
+.card canvas{max-width:520px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+.card h2{font-size:14px;margin:0 0 2px}
+.card .sub{font-size:12.5px;color:var(--muted);margin:0 0 8px}
+canvas{width:100%;aspect-ratio:1/1;display:block;border-radius:8px;touch-action:none}
+#c3,#c4,#c5{cursor:grab}
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin-top:14px}
+.moves{display:flex;flex-wrap:wrap;gap:6px}
+button{font:inherit;font-size:13.5px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 11px;border-radius:8px;cursor:pointer}
+button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+label{font-size:13.5px;color:var(--muted);display:flex;align-items:center;gap:8px}
+input[type=range]{width:150px;accent-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.note{font-size:13px;color:var(--muted);margin-top:14px;max-width:900px}
+code{font-size:12.5px}
+section.s2{margin-top:44px;padding-top:24px;border-top:1px solid var(--line)}
+.panels2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.panels2 .wide{grid-column:1/-1}
+.card canvas.wide{aspect-ratio:16/9;max-width:none}
+@media (max-width:700px){.panels2{grid-template-columns:1fr}}
+.ctl{display:flex;flex-direction:column;gap:9px}
+.ctl label{justify-content:space-between}
+.stats2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.stats2 .stat .v{font-size:17px}
+</style>
+</head>
+<body>
+<main>
+<h1>Hidden tesseract reshuffle</h1>
+<p class="lead">16 drones sit at the corners of a hidden 4D hypercube. Projecting it onto the sheet with rows (1,0,2,0)/√5 and (0,1,0,2)/√5 gives an exact 4×4 grid. Rotating the hidden hypercube reshuffles the drones <em>on</em> the sheet. Separately, the sheet bends into a cylinder (no stretching), which places the formation in 3D.</p>
+
+<div class="panels">
+  <div class="card">
+    <h2>The hidden hypercube itself (4D)</h2>
+    <p class="sub">Floor = the two sheet directions, height = hidden direction 1, size = hidden direction 2 (nearer in 4D = bigger). Seen from straight above, it is the sheet panel. Drag to rotate the view.</p>
+    <canvas id="c4"></canvas>
+  </div>
+  <div class="card">
+    <h2>The projection: (u, v) = P · R(t) · x</h2>
+    <p class="sub">Light shines along the two hidden directions. Each corner drops onto the sheet (floor) along a dashed ray; where it lands is that drone's sheet position. Flatten squashes the hidden directions to zero.</p>
+    <canvas id="c5"></canvas>
+    <label style="margin-top:8px;justify-content:center">Flatten <input type="range" id="flat" min="0" max="100" value="0"></label>
+  </div>
+  <div class="card">
+    <h2>Sheet coordinates (u, v): the hidden layer</h2>
+    <p class="sub">Grey rings = grid slots, faint lines = paths for this move, red = closest pair.</p>
+    <canvas id="c2"></canvas>
+  </div>
+  <div class="card">
+    <h2>3D formation: the visible layer</h2>
+    <p class="sub">Drag to rotate the view. The bent sheet keeps every distance measured along it.</p>
+    <canvas id="c3"></canvas>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="moves" id="moves"></div>
+  <button id="play">Pause</button>
+  <label>Move progress <input type="range" id="scrub" min="0" max="1000" value="0"></label>
+  <label>Bend κ <input type="range" id="kap" min="0" max="100" value="60"><span id="kapv"></span></label>
+  <label><input type="checkbox" id="flex" checked> Flex while reshuffling</label>
+  <label><input type="checkbox" id="auto" checked> Repeat move</label>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="k">Closest pair on the sheet (now)</div><div class="v" id="sNow">–</div></div>
+  <div class="stat"><div class="k">Worst on the sheet during this move</div><div class="v" id="sMin">–</div></div>
+  <div class="stat"><div class="k">Closest pair in 3D (now)</div><div class="v" id="dNow">–</div></div>
+  <div class="stat"><div class="k">Guaranteed 3D minimum: (2/κ)·sin(κ·s/2)</div><div class="v" id="dBound">–</div></div>
+</div>
+
+<p class="note">Units: 1 = grid spacing; κ is in 1/spacing. A half turn in the z–w or x–y plane maps the hypercube onto itself, so the drones land back on the 4×4 grid in new slots. The x–z move shows the danger: two drones meet partway through, because the vector between them lines up with the hidden directions. The bound in the last box uses the closest sheet distance s and the current curvature; the 3D value can never fall below it.</p>
+
+<section class="s2">
+<h1>Deformable virtual structure that bends and stretches</h1>
+<p class="lead">No hypercube here. The 16 drones keep fixed slots (u, v) on a sheet, and the sheet's shape comes from a 4×4 cage of control points (a cubic Bézier surface). Moving the control points bends and stretches the sheet, and the drones follow. In auto mode the formation (3 grid spacings wide) flies through a doorway 2.2 spacings wide. It lengthens along the direction of travel and curls into a trough, then relaxes again. Squeezing straight across would crush neighbours, so the auto plan widens the fabric slightly and lets the curl do the narrowing.</p>
+<div class="panels2">
+  <div class="card wide">
+    <h2>3D: the formation passing a doorway</h2>
+    <p class="sub">Small squares = control points (the cage), mesh = the sheet, red line = closest pair, red drone = touching the wall. Drag to rotate the view.</p>
+    <canvas id="d3" class="wide"></canvas>
+  </div>
+  <div class="card">
+    <h2>The lens: local stretch on the sheet</h2>
+    <p class="sub">Colour = smallest stretch σ<sub>min</sub> of the map at each point: grey = 1 (no stretch), orange = compressed, blue = stretched. Dots = drone slots.</p>
+    <canvas id="dl"></canvas>
+  </div>
+  <div class="card ctl">
+    <h2>Controls and safety</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="dplay">Pause</button><label style="justify-content:flex-start"><input type="checkbox" id="dauto" checked> Auto deform for the doorway</label></div>
+    <label><span>Stretch along travel σ<sub>u</sub></span> <input type="range" id="dsu" min="70" max="160" value="100"></label>
+    <label><span>Stretch across σ<sub>v</sub></span> <input type="range" id="dsv" min="50" max="130" value="100"></label>
+    <label><span>Curl κ (trough)</span> <input type="range" id="dka" min="0" max="180" value="0"></label>
+    <div class="stats2">
+      <div class="stat"><div class="k">σ<sub>min</sub> over the sheet</div><div class="v" id="dsig">–</div></div>
+      <div class="stat"><div class="k">Max curvature κ<sub>max</sub></div><div class="v" id="dkap">–</div></div>
+      <div class="stat"><div class="k">Closest pair in 3D</div><div class="v" id="dmin">–</div></div>
+      <div class="stat"><div class="k">Guarantee (2/κ)·sin(κ·σ<sub>min</sub>/2)</div><div class="v" id="dgua">–</div></div>
+      <div class="stat"><div class="k">Clearance in the doorway</div><div class="v" id="dclr">–</div></div>
+      <div class="stat"><div class="k">Sheet position x</div><div class="v" id="dx">–</div></div>
+    </div>
+    <p class="note" style="margin:4px 0 0">Untick auto and fly through without deforming to see drones hit the wall. The guarantee combines the stretch bound (every path on the sheet is at least σ<sub>min</sub> times as long in 3D) with the curvature bound (a curve can't shortcut a circle of radius 1/κ). It applies to neighbours, for whom κ·σ<sub>min</sub> ≤ π.</p>
+  </div>
+</div>
+</section>
+
+<section class="s2">
+<h1>Drones in their own cells: Voronoi on a bendable, squishable sheet</h1>
+<p class="lead">No fixed slots. Each drone owns the part of the sheet that is closer to it than to any other drone (its Voronoi cell), and keeps moving toward the centre of its cell (Lloyd's algorithm). Squishing the sheet reshapes the cells, so the drones redistribute by themselves; bending only lifts them up and down. Every step keeps each drone inside its <em>buffered</em> cell (its cell shrunk by half the safety distance), so no two drones can come closer than the safety distance on the sheet. Here the sheet narrows and lengthens for the doorway, and the formation reorganises into fewer columns instead of being crushed.</p>
+<div class="panels2">
+  <div class="card wide">
+    <h2>3D: cells and drones on the curled sheet</h2>
+    <p class="sub">Coloured patches = each drone's cell, drawn on the sheet. Drag to rotate the view.</p>
+    <canvas id="v3" class="wide"></canvas>
+  </div>
+  <div class="card">
+    <h2>The sheet laid flat (its true shape)</h2>
+    <p class="sub">Bending doesn't change this picture; only squishing does. Dashed = buffered cells, × = cell centres the drones head for.</p>
+    <canvas id="vf"></canvas>
+  </div>
+  <div class="card ctl">
+    <h2>Controls and safety</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="vplay">Pause</button><button id="vkill">Lose a drone</button><button id="vrestore">Restore all</button>
+    </div>
+    <label style="justify-content:flex-start"><input type="checkbox" id="vauto" checked> Auto squish and curl for the doorway</label>
+    <label><span>Length along travel σ<sub>u</sub></span> <input type="range" id="vsu" min="70" max="180" value="100"></label>
+    <label><span>Width across σ<sub>v</sub></span> <input type="range" id="vsv" min="40" max="130" value="100"></label>
+    <label><span>Curl κ</span> <input type="range" id="vka" min="0" max="150" value="0"></label>
+    <label><span>Redistribution speed</span> <input type="range" id="vgain" min="5" max="60" value="25"></label>
+    <div class="stats2">
+      <div class="stat"><div class="k">Drones flying</div><div class="v" id="vn">–</div></div>
+      <div class="stat"><div class="k">Closest pair on the sheet</div><div class="v" id="vsd">–</div></div>
+      <div class="stat"><div class="k">Closest pair in 3D</div><div class="v" id="v3d">–</div></div>
+      <div class="stat"><div class="k">Best possible spacing (area rule)</div><div class="v" id="varea">–</div></div>
+      <div class="stat"><div class="k">Clearance in the doorway</div><div class="v" id="vclr">–</div></div>
+      <div class="stat"><div class="k">Sheet area</div><div class="v" id="vA">–</div></div>
+    </div>
+    <p class="note" style="margin:4px 0 0">Safety distance = 0.5 grid spacings. The area rule √(2A / (√3·N)) is the spacing of a perfect hexagonal packing of N drones on area A: no arrangement can do better, so the planner may only squish while it stays above the safety distance. Lose a drone and watch the neighbours' cells grow and close the hole.</p>
+  </div>
+</div>
+</section>
+</main>
+
+<script>
+(()=>{
+// ---------- hidden 4D layer ----------
+const V0=[];for(const a of[-1,1])for(const b of[-1,1])for(const c of[-1,1])for(const d of[-1,1])V0.push([a,b,c,d]);
+const N=V0.length;
+const proj=p=>[(p[0]+2*p[2])/2,(p[1]+2*p[3])/2];   // = (√5/2)·P·p, so grid spacing = 1
+const MOVES=[
+  {id:'zw',label:'Half turn z–w',planes:[[2,3]]},
+  {id:'xy',label:'Half turn x–y',planes:[[0,1]]},
+  {id:'dbl',label:'Double turn x–y + z–w',planes:[[0,1],[2,3]]},
+  {id:'xz',label:'Half turn x–z (collides)',planes:[[0,2]]},
+];
+let move=MOVES[0];
+let base=V0.map(p=>p.slice());
+const ease=t=>t*t*(3-2*t);
+function rotate(p,planes,th){
+  const q=p.slice(),c=Math.cos(th),s=Math.sin(th);
+  for(const[i,j]of planes){const a=q[i],b=q[j];q[i]=c*a-s*b;q[j]=s*a+c*b}
+  return q;
+}
+const sheetAt=t=>base.map(p=>proj(rotate(p,move.planes,Math.PI*ease(t))));
+function closest(P){let m=Infinity,ij=[0,1];
+  for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){
+    let d=0;for(let k=0;k<P[i].length;k++)d+=(P[i][k]-P[j][k])**2;d=Math.sqrt(d);
+    if(d<m){m=d;ij=[i,j]}}
+  return{m,ij}}
+let paths=[],moveMin=0;
+function prepMove(){
+  paths=Array.from({length:N},()=>[]);moveMin=Infinity;
+  for(let k=0;k<=240;k++){const P=sheetAt(k/240);P.forEach((u,i)=>paths[i].push(u));moveMin=Math.min(moveMin,closest(P).m)}
+}
+
+// ---------- visible layer: cylinder bend (developable) ----------
+function bend(u,v,k){
+  if(Math.abs(k)<1e-6)return[u,v,0];
+  return[Math.sin(k*u)/k,v,(1-Math.cos(k*u))/k];
+}
+
+// ---------- UI ----------
+const $=id=>document.getElementById(id);
+const c2=$('c2'),c3=$('c3'),c4=$('c4'),c5=$('c5'),x2=c2.getContext('2d'),x3=c3.getContext('2d'),x4=c4.getContext('2d'),x5=c5.getContext('2d');
+const EDGES=[];for(let i=0;i<N;i++)for(let j=i+1;j<N;j++)if(V0[i].filter((v,k)=>v!==V0[j][k]).length===1)EDGES.push([i,j]);
+const colors=V0.map((_,i)=>`hsl(${Math.round(i*360/N)} 70% 52%)`);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const movesEl=$('moves');
+MOVES.forEach(m=>{const b=document.createElement('button');b.textContent=m.label;b.dataset.id=m.id;
+  b.onclick=()=>{move=m;t=0;hold=0.6;prepMove();syncButtons()};movesEl.appendChild(b)});
+function syncButtons(){[...movesEl.children].forEach(b=>b.classList.toggle('on',b.dataset.id===move.id))}
+
+let playing=true,t=0,hold=0.6,clock=0,yaw=-0.75,pitch=0.55;
+const DUR=4.5;
+$('play').onclick=()=>{playing=!playing;$('play').textContent=playing?'Pause':'Play'};
+$('scrub').oninput=e=>{playing=false;$('play').textContent='Play';t=e.target.value/1000;hold=0};
+
+const view4={yaw:-0.6,pitch:0.45};
+function draggable(cv,get,set){let drag=null;
+  cv.addEventListener('pointerdown',e=>{const[y,p]=get();drag=[e.clientX,e.clientY,y,p];cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'});
+  cv.addEventListener('pointermove',e=>{if(!drag)return;set(drag[2]+(e.clientX-drag[0])*0.01,Math.max(-0.2,Math.min(1.5707,drag[3]+(e.clientY-drag[1])*0.01)))});
+  cv.addEventListener('pointerup',()=>{drag=null;cv.style.cursor='grab'})}
+draggable(c3,()=>[yaw,pitch],(y,p)=>{yaw=y;pitch=Math.min(1.45,p)});
+draggable(c4,()=>[view4.yaw,view4.pitch],(y,p)=>{view4.yaw=y;view4.pitch=p});
+const view5={yaw:-0.6,pitch:0.6};
+draggable(c5,()=>[view5.yaw,view5.pitch],(y,p)=>{view5.yaw=y;view5.pitch=p});
+
+function fit(cv,ctx){const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const w=Math.round(r.width*dpr);if(cv.width!==w){cv.width=w;cv.height=w}
+  ctx.setTransform(dpr,0,0,dpr,0,0);return r.width}
+
+function drawSheet(P,cl){
+  const W=fit(c2,x2),sc=W/5.2,o=W/2,X=u=>o+u[0]*sc,Y=u=>o-u[1]*sc;
+  x2.clearRect(0,0,W,W);
+  x2.strokeStyle=css('--line');x2.lineWidth=1;x2.strokeRect(o-2.3*sc,o-2.3*sc,4.6*sc,4.6*sc);
+  x2.strokeStyle=css('--ghost');x2.lineWidth=1.2;
+  for(const a of[-1.5,-.5,.5,1.5])for(const b of[-1.5,-.5,.5,1.5]){x2.beginPath();x2.arc(X([a,b]),Y([a,b]),11,0,7);x2.stroke()}
+  x2.globalAlpha=.35;x2.lineWidth=1.5;
+  paths.forEach((pa,i)=>{x2.strokeStyle=colors[i];x2.beginPath();pa.forEach((u,k)=>k?x2.lineTo(X(u),Y(u)):x2.moveTo(X(u),Y(u)));x2.stroke()});
+  x2.globalAlpha=1;
+  const[a,b]=cl.ij;x2.strokeStyle=css('--warn');x2.lineWidth=2.5;x2.beginPath();x2.moveTo(X(P[a]),Y(P[a]));x2.lineTo(X(P[b]),Y(P[b]));x2.stroke();
+  P.forEach((u,i)=>{x2.fillStyle=colors[i];x2.beginPath();x2.arc(X(u),Y(u),8,0,7);x2.fill();
+    x2.fillStyle='#fff';x2.font='600 9px system-ui';x2.textAlign='center';x2.textBaseline='middle';x2.fillText(i+1,X(u),Y(u)+.5)});
+}
+
+function cam(p){
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z=p[2]-1.2;
+  return[x1,z*cp+y1*sp,-y1*cp+z*sp];
+}
+function drawWorld(Q,k,cl){
+  const W=fit(c3,x3),sc=W/6,o=W/2,S=p=>{const c=cam(p);return[o+c[0]*sc,o-c[1]*sc,c[2]]};
+  x3.clearRect(0,0,W,W);
+  // ground grid
+  x3.strokeStyle=css('--line');x3.lineWidth=1;
+  for(let g=-3;g<=3;g++){let a=S([g,-3,-1.6]),b=S([g,3,-1.6]);x3.beginPath();x3.moveTo(a[0],a[1]);x3.lineTo(b[0],b[1]);x3.stroke();
+    a=S([-3,g,-1.6]);b=S([3,g,-1.6]);x3.beginPath();x3.moveTo(a[0],a[1]);x3.lineTo(b[0],b[1]);x3.stroke()}
+  // sheet wireframe
+  x3.strokeStyle=css('--sheet');x3.lineWidth=1;
+  const L=2.3,n=12;
+  for(let i=0;i<=n;i++){const s=-L+2*L*i/n;
+    x3.beginPath();for(let j=0;j<=40;j++){const p=S(bend(-L+2*L*j/40,s,k));j?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1])}x3.stroke();
+    x3.beginPath();for(let j=0;j<=40;j++){const p=S(bend(s,-L+2*L*j/40,k));j?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1])}x3.stroke()}
+  // drop lines + drones, depth sorted
+  const pts=Q.map((p,i)=>({i,s:S(p),g:S([p[0],p[1],-1.6])})).sort((a,b)=>a.s[2]-b.s[2]);
+  x3.strokeStyle=css('--ghost');x3.lineWidth=1;
+  pts.forEach(d=>{x3.beginPath();x3.moveTo(d.s[0],d.s[1]);x3.lineTo(d.g[0],d.g[1]);x3.stroke()});
+  const[a,b]=cl.ij,A=S(Q[a]),B=S(Q[b]);x3.strokeStyle=css('--warn');x3.lineWidth=2.5;x3.beginPath();x3.moveTo(A[0],A[1]);x3.lineTo(B[0],B[1]);x3.stroke();
+  pts.forEach(d=>{x3.fillStyle=colors[d.i];x3.beginPath();x3.arc(d.s[0],d.s[1],8,0,7);x3.fill();
+    x3.fillStyle='#fff';x3.font='600 9px system-ui';x3.textAlign='center';x3.textBaseline='middle';x3.fillText(d.i+1,d.s[0],d.s[1]+.5)});
+}
+
+// 4D view in a basis aligned with the sheet: a,b = sheet directions, c,d = the two hidden directions
+function drawHyper(R4){
+  const W=fit(c4,x4),sc=W/5.2,o=W/2,D=6;
+  const cy=Math.cos(view4.yaw),sy=Math.sin(view4.yaw),cp=Math.cos(view4.pitch),sp=Math.sin(view4.pitch);
+  const S=p=>{
+    const a=(p[0]+2*p[2])/2,b=(p[1]+2*p[3])/2,c=(2*p[0]-p[2])/2,d=(2*p[1]-p[3])/2;
+    const f=D/(D-d),x=a*f,y=b*f,z=c*f*0.85;
+    const x1=x*cy-y*sy,y1=x*sy+y*cy;
+    return{X:o+x1*sc,Y:o-(z*cp+y1*sp)*sc,depth:-y1*cp+z*sp,f};
+  };
+  x4.clearRect(0,0,W,W);
+  const P=R4.map(S);
+  x4.strokeStyle=css('--muted');x4.globalAlpha=.55;x4.lineWidth=1.3;
+  EDGES.forEach(([i,j])=>{x4.beginPath();x4.moveTo(P[i].X,P[i].Y);x4.lineTo(P[j].X,P[j].Y);x4.stroke()});
+  x4.globalAlpha=1;
+  P.map((p,i)=>({p,i})).sort((u,v)=>u.p.depth-v.p.depth).forEach(({p,i})=>{
+    const r=5+3.5*p.f;x4.fillStyle=colors[i];x4.beginPath();x4.arc(p.X,p.Y,r,0,7);x4.fill();
+    x4.fillStyle='#fff';x4.font='600 9px system-ui';x4.textAlign='center';x4.textBaseline='middle';x4.fillText(i+1,p.X,p.Y+.5)});
+}
+
+// projection panel: corners float above the sheet (height = hidden dir 1, perspective = hidden dir 2) and drop onto it
+function drawProj(R4){
+  const W=fit(c5,x5),sc=W/6,o=W/2,D=6,FLOOR=-1.9,LIFT=2.3,lam=$('flat').value/100;
+  const cy=Math.cos(view5.yaw),sy=Math.sin(view5.yaw),cp=Math.cos(view5.pitch),sp=Math.sin(view5.pitch);
+  const S=([x,y,z])=>{const x1=x*cy-y*sy,y1=x*sy+y*cy;return{X:o+x1*sc,Y:o-(z*cp+y1*sp)*sc,depth:-y1*cp+z*sp}};
+  x5.clearRect(0,0,W,W);
+  // the sheet (floor) with its grid slots
+  const L=2.3,corners=[[-L,-L],[L,-L],[L,L],[-L,L]].map(([u,v])=>S([u,v,FLOOR]));
+  x5.fillStyle=css('--sheet');x5.globalAlpha=.25;x5.beginPath();corners.forEach((p,i)=>i?x5.lineTo(p.X,p.Y):x5.moveTo(p.X,p.Y));x5.fill();
+  x5.globalAlpha=1;x5.strokeStyle=css('--sheet');x5.lineWidth=1.2;x5.closePath();x5.stroke();
+  x5.strokeStyle=css('--ghost');
+  for(const a of[-1.5,-.5,.5,1.5])for(const b of[-1.5,-.5,.5,1.5]){x5.beginPath();
+    for(let k=0;k<=24;k++){const th=k/24*2*Math.PI,p=S([a+.22*Math.cos(th),b+.22*Math.sin(th),FLOOR]);k?x5.lineTo(p.X,p.Y):x5.moveTo(p.X,p.Y)}x5.stroke()}
+  // corner positions and their shadows
+  const C=[],Sh=[];
+  R4.forEach(p=>{const a=(p[0]+2*p[2])/2,b=(p[1]+2*p[3])/2,c=(2*p[0]-p[2])/2,d=(2*p[1]-p[3])/2;
+    const f=D/(D-d),top=[a*f,b*f,FLOOR+LIFT+c*f*0.85],sh=[a,b,FLOOR];
+    C.push({w:top.map((v,k)=>v+(sh[k]-v)*lam),f:1+(f-1)*(1-lam)});Sh.push(sh)});
+  // shadows
+  Sh.forEach((s,i)=>{const p=S(s);x5.fillStyle=colors[i];x5.globalAlpha=.55;x5.beginPath();x5.ellipse(p.X,p.Y,6,6*Math.max(.35,sp),0,0,7);x5.fill()});
+  x5.globalAlpha=1;
+  // rays
+  x5.setLineDash([3,4]);x5.lineWidth=1;
+  C.forEach((c,i)=>{const a=S(c.w),b=S(Sh[i]);x5.strokeStyle=colors[i];x5.globalAlpha=.6;x5.beginPath();x5.moveTo(a.X,a.Y);x5.lineTo(b.X,b.Y);x5.stroke()});
+  x5.setLineDash([]);x5.globalAlpha=1;
+  // hypercube edges and corners
+  const P=C.map(c=>S(c.w));
+  x5.strokeStyle=css('--muted');x5.globalAlpha=.5;x5.lineWidth=1.2;
+  EDGES.forEach(([i,j])=>{x5.beginPath();x5.moveTo(P[i].X,P[i].Y);x5.lineTo(P[j].X,P[j].Y);x5.stroke()});
+  x5.globalAlpha=1;
+  P.map((p,i)=>({p,i})).sort((u,v)=>u.p.depth-v.p.depth).forEach(({p,i})=>{
+    const r=4.5+3*C[i].f;x5.fillStyle=colors[i];x5.beginPath();x5.arc(p.X,p.Y,r,0,7);x5.fill();
+    x5.fillStyle='#fff';x5.font='600 9px system-ui';x5.textAlign='center';x5.textBaseline='middle';x5.fillText(i+1,p.X,p.Y+.5)});
+}
+
+const fmt=x=>(x<1e-3?'0.00':x.toFixed(2))+' ×';
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;clock+=dt;
+  if(playing){
+    if(hold>0)hold-=dt;
+    else{t+=dt/DUR;
+      if(t>=1){t=1;
+        if($('auto').checked){base=sheetBase();t=0;hold=1.0;prepMove()}else{playing=false;$('play').textContent='Play'}}}
+    $('scrub').value=Math.round(t*1000);
+  }
+  const k0=$('kap').value/100,k=$('flex').checked?k0*(0.55+0.45*Math.sin(clock*2*Math.PI/7)):k0;
+  $('kapv').textContent=k.toFixed(2);
+  const P=sheetAt(t),cs=closest(P);
+  const Q=P.map(u=>bend(u[0],u[1],k)),c3d=closest(Q);
+  const bound=k<1e-6?cs.m:(2/k)*Math.sin(k*cs.m/2);
+  const R4=base.map(p=>rotate(p,move.planes,Math.PI*ease(t)));
+  drawHyper(R4);drawProj(R4);
+  drawSheet(P,cs);drawWorld(Q,k,c3d);
+  $('sNow').textContent=fmt(cs.m);$('sMin').textContent=fmt(moveMin);
+  $('sMin').style.color=moveMin<0.05?css('--warn'):css('--ink');
+  $('dNow').textContent=fmt(c3d.m);$('dBound').textContent=fmt(bound);
+  requestAnimationFrame(frame);
+}
+// after a full half turn, the rotated hypercube becomes the new starting pose
+function sheetBase(){return base.map(p=>rotate(p,move.planes,Math.PI).map(x=>Math.round(x*1e9)/1e9))}
+syncButtons();prepMove();requestAnimationFrame(frame);
+})();
+</script>
+<script>
+// ---------- section 2: deformable virtual structure (Bezier cage) ----------
+(()=>{
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SLOTS=[];for(const a of[-1.5,-.5,.5,1.5])for(const b of[-1.5,-.5,.5,1.5])SLOTS.push([a,b]);
+const N=SLOTS.length,colors=SLOTS.map((_,i)=>`hsl(${Math.round(i*360/N)} 70% 52%)`);
+const GAP=2.2,Z0=1.0,REST=[0,1,2,3].map(i=>-2+4*i/3),R_DRONE=0.08;
+const B=t=>[(1-t)**3,3*t*(1-t)**2,3*t*t*(1-t),t**3];
+let C=[];  // 4x4 control points
+function cage(xc,su,sv,k){
+  C=REST.map(ui=>REST.map(vj=>{const u=su*ui+xc,v=sv*vj;
+    return Math.abs(k)<1e-4?[u,v,Z0]:[u,Math.sin(k*v)/k,Z0+(1-Math.cos(k*v))/k]}))}
+function surf(u,v){const bs=B((u+2)/4),bt=B((v+2)/4),p=[0,0,0];
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){const w=bs[i]*bt[j];for(let k=0;k<3;k++)p[k]+=w*C[i][j][k]}return p}
+const sub=(a,b)=>a.map((x,i)=>x-b[i]),dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+// local stretch (singular values of dΦ) and principal curvatures at (u,v)
+function local(u,v){const h=0.02,p=surf(u,v),pu=surf(u+h,v),pm=surf(u-h,v),pv=surf(u,v+h),pn=surf(u,v-h);
+  const fu=sub(pu,pm).map(x=>x/(2*h)),fv=sub(pv,pn).map(x=>x/(2*h));
+  const fuu=pu.map((x,i)=>(x-2*p[i]+pm[i])/(h*h)),fvv=pv.map((x,i)=>(x-2*p[i]+pn[i])/(h*h));
+  const fuv=sub(sub(surf(u+h,v+h),surf(u+h,v-h)),sub(surf(u-h,v+h),surf(u-h,v-h))).map(x=>x/(4*h*h));
+  const E=dot(fu,fu),F=dot(fu,fv),G=dot(fv,fv),tr=E+G,det=E*G-F*F,disc=Math.sqrt(Math.max(0,tr*tr/4-det));
+  const smin=Math.sqrt(Math.max(0,tr/2-disc));
+  let n=cross(fu,fv);const nl=Math.hypot(...n)||1;n=n.map(x=>x/nl);
+  const L=dot(fuu,n),M=dot(fuv,n),Nn=dot(fvv,n);
+  // shape operator S = g^-1 h, eigenvalues = principal curvatures
+  const a=(G*L-F*M)/det,b=(G*M-F*Nn)/det,c=(E*M-F*L)/det,d=(E*Nn-F*M)/det;
+  const t2=(a+d)/2,dd=Math.sqrt(Math.max(0,t2*t2-(a*d-b*c)));
+  return{smin,kmax:Math.max(Math.abs(t2+dd),Math.abs(t2-dd))}}
+
+const d3=$('d3'),dl=$('dl'),x3=d3.getContext('2d'),xl=dl.getContext('2d');
+function fit(cv,ctx,asp){const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const w=Math.round(r.width*dpr),h=Math.round(r.width/asp*dpr);if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}
+  ctx.setTransform(dpr,0,0,dpr,0,0);return[r.width,r.width/asp]}
+let yaw=-0.55,pitch=0.5,drag=null;
+d3.style.cursor='grab';d3.style.touchAction='none';
+d3.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY,yaw,pitch];d3.setPointerCapture(e.pointerId)});
+d3.addEventListener('pointermove',e=>{if(!drag)return;yaw=drag[2]+(e.clientX-drag[0])*0.01;pitch=Math.max(-0.1,Math.min(1.5,drag[3]+(e.clientY-drag[1])*0.01))});
+d3.addEventListener('pointerup',()=>drag=null);
+
+let playing=true,xc=-7;
+$('dplay').onclick=()=>{playing=!playing;$('dplay').textContent=playing?'Pause':'Play'};
+const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t)};
+
+function frame(){
+  if(playing){xc+=0.022;if(xc>7)xc=-7}
+  let su,sv,k;
+  if($('dauto').checked){const a=smooth((6-Math.abs(xc))/3.2);su=1+0.3*a;sv=1+0.15*a;k=0.85*a;
+    $('dsu').value=su*100;$('dsv').value=sv*100;$('dka').value=k*100}
+  else{su=$('dsu').value/100;sv=$('dsv').value/100;k=$('dka').value/100}
+  cage(xc,su,sv,k);
+  const Q=SLOTS.map(([u,v])=>surf(u,v));
+  // lens field
+  const G=22,field=[];let smin=Infinity,kmax=0;
+  for(let i=0;i<G;i++){field.push([]);for(let j=0;j<G;j++){const u=-2+4*(i+.5)/G,v=-2+4*(j+.5)/G,l=local(u,v);
+    field[i].push(l.smin);smin=Math.min(smin,l.smin);kmax=Math.max(kmax,l.kmax)}}
+  let best=Infinity,ij=[0,1];
+  for(let i=0;i<N;i++)for(let j=i+1;j<N;j++){const d=Math.hypot(...sub(Q[i],Q[j]));if(d<best){best=d;ij=[i,j]}}
+  const gua=kmax<1e-4?smin:(2/kmax)*Math.sin(Math.min(Math.PI,kmax*smin)/2);
+  let clr=null;const hit=new Set();
+  Q.forEach((p,i)=>{if(Math.abs(p[0])<0.15+R_DRONE){const m=GAP/2-Math.abs(p[1])-R_DRONE;clr=clr===null?m:Math.min(clr,m);if(m<0)hit.add(i)}});
+  drawWorld(Q,ij,hit);drawLens(field);
+  $('dsig').textContent=smin.toFixed(2);$('dkap').textContent=kmax.toFixed(2);
+  $('dmin').textContent=best.toFixed(2)+' ×';$('dgua').textContent=gua.toFixed(2)+' ×';
+  $('dclr').textContent=clr===null?'not in doorway':(clr<0?'COLLISION':clr.toFixed(2)+' ×');
+  $('dclr').style.color=clr!==null&&clr<0?css('--warn'):css('--ink');
+  $('dx').textContent=xc.toFixed(1);
+  requestAnimationFrame(frame);
+}
+
+function drawWorld(Q,ij,hit){
+  const[W,H]=fit(d3,x3,16/9),sc=W/13,ox=W/2,oy=H*0.6;
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const S=p=>{const x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z=p[2]-1;return[ox+x1*sc,oy-(z*cp+y1*sp)*sc,-y1*cp+z*sp]};
+  const line=(a,b)=>{const A=S(a),B=S(b);x3.beginPath();x3.moveTo(A[0],A[1]);x3.lineTo(B[0],B[1]);x3.stroke()};
+  const poly=pts=>{x3.beginPath();pts.map(S).forEach((p,i)=>i?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1]));x3.closePath()};
+  x3.clearRect(0,0,W,H);
+  x3.strokeStyle=css('--line');x3.lineWidth=1;
+  for(let g=-8;g<=8;g+=2)line([g,-4,0],[g,4,0]);for(let g=-4;g<=4;g+=2)line([-8,g,0],[8,g,0]);
+  // wall with doorway
+  const T=0.15,Hh=3.2;
+  for(const s of[1,-1]){const y0=s*GAP/2,y1=s*4;
+    x3.fillStyle=css('--muted');x3.globalAlpha=.16;poly([[-T,y0,0],[-T,y1,0],[-T,y1,Hh],[-T,y0,Hh]]);x3.fill();
+    x3.globalAlpha=.28;poly([[-T,y0,Hh],[-T,y1,Hh],[T,y1,Hh],[T,y0,Hh]]);x3.fill();
+    x3.globalAlpha=.7;x3.strokeStyle=css('--muted');poly([[-T,y0,0],[-T,y1,0],[-T,y1,Hh],[-T,y0,Hh]]);x3.stroke();line([-T,y0,0],[T,y0,0]);line([-T,y0,Hh],[T,y0,Hh]);x3.globalAlpha=1}
+  // sheet mesh
+  x3.strokeStyle=css('--sheet');x3.lineWidth=1;
+  for(let i=0;i<=10;i++){const s=-2+4*i/10;
+    x3.beginPath();for(let j=0;j<=24;j++){const p=S(surf(-2+4*j/24,s));j?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1])}x3.stroke();
+    x3.beginPath();for(let j=0;j<=24;j++){const p=S(surf(s,-2+4*j/24));j?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1])}x3.stroke()}
+  // cage
+  x3.strokeStyle=css('--muted');x3.globalAlpha=.5;x3.setLineDash([2,3]);
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){if(i<3)line(C[i][j],C[i+1][j]);if(j<3)line(C[i][j],C[i][j+1])}
+  x3.setLineDash([]);x3.globalAlpha=1;x3.fillStyle=css('--muted');
+  C.flat().forEach(c=>{const p=S(c);x3.fillRect(p[0]-3,p[1]-3,6,6)});
+  // drones
+  const pts=Q.map((p,i)=>({i,s:S(p),g:S([p[0],p[1],0])})).sort((a,b)=>a.s[2]-b.s[2]);
+  x3.strokeStyle=css('--ghost');pts.forEach(d=>{x3.beginPath();x3.moveTo(d.s[0],d.s[1]);x3.lineTo(d.g[0],d.g[1]);x3.stroke()});
+  x3.strokeStyle=css('--warn');x3.lineWidth=2.5;line(Q[ij[0]],Q[ij[1]]);
+  pts.forEach(d=>{x3.fillStyle=hit.has(d.i)?css('--warn'):colors[d.i];x3.beginPath();x3.arc(d.s[0],d.s[1],7,0,7);x3.fill();
+    if(hit.has(d.i)){x3.strokeStyle=css('--warn');x3.lineWidth=2;x3.beginPath();x3.arc(d.s[0],d.s[1],11,0,7);x3.stroke()}
+    x3.fillStyle='#fff';x3.font='600 9px system-ui';x3.textAlign='center';x3.textBaseline='middle';x3.fillText(d.i+1,d.s[0],d.s[1]+.5)});
+}
+
+function lensColor(s){ // grey at 1, orange when compressed, blue when stretched
+  const t=Math.max(-1,Math.min(1,(s-1)/0.5));
+  return t<0?`hsla(28 90% 55% / ${(-t*0.85).toFixed(3)})`:`hsla(218 80% 58% / ${(t*0.85).toFixed(3)})`}
+function drawLens(field){
+  const[W]=fit(dl,xl,1),G=field.length,pad=W*0.08,cell=(W-2*pad)/G;
+  xl.clearRect(0,0,W,W);xl.fillStyle=css('--ghost');xl.globalAlpha=.25;xl.fillRect(pad,pad,W-2*pad,W-2*pad);xl.globalAlpha=1;
+  for(let i=0;i<G;i++)for(let j=0;j<G;j++){xl.fillStyle=lensColor(field[i][j]);xl.fillRect(pad+i*cell,W-pad-(j+1)*cell,cell+.5,cell+.5)}
+  xl.strokeStyle=css('--line');xl.strokeRect(pad,pad,W-2*pad,W-2*pad);
+  const X=u=>pad+(u+2)/4*(W-2*pad),Y=v=>W-pad-(v+2)/4*(W-2*pad);
+  SLOTS.forEach(([u,v],i)=>{xl.fillStyle=colors[i];xl.beginPath();xl.arc(X(u),Y(v),7,0,7);xl.fill();
+    xl.fillStyle='#fff';xl.font='600 9px system-ui';xl.textAlign='center';xl.textBaseline='middle';xl.fillText(i+1,X(u),Y(v)+.5)});
+  xl.fillStyle=css('--muted');xl.font='12px system-ui';xl.textAlign='center';
+  xl.fillText('u (travel direction) →',W/2,W-pad*0.35);
+  xl.save();xl.translate(pad*0.4,W/2);xl.rotate(-Math.PI/2);xl.fillText('v (across) →',0,0);xl.restore();
+}
+requestAnimationFrame(frame);
+})();
+</script>
+<script>
+// ---------- section 3: Voronoi cells + Lloyd on a squishable, bendable sheet ----------
+(()=>{
+const $=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const N=16,GAP=2.2,Z0=1.0,R_DRONE=0.08,D_SAFE=0.5,R_BUF=D_SAFE/2;
+const colors=[...Array(N)].map((_,i)=>`hsl(${Math.round(i*360/N)} 70% 52%)`);
+// drones stored in normalised sheet coords s in [-2,2]^2; true (intrinsic) position = (su*s0, sv*s1)
+let S=[],alive=[],falling=[];
+function restore(){S=[];for(const a of[-1.5,-.5,.5,1.5])for(const b of[-1.5,-.5,.5,1.5])S.push([a,b]);alive=S.map(()=>true);falling=[]}
+restore();
+
+// ---- 2D convex polygon helpers ----
+function clip(P,nx,ny,c){const out=[];
+  for(let k=0;k<P.length;k++){const A=P[k],B=P[(k+1)%P.length],da=nx*A[0]+ny*A[1]-c,db=nx*B[0]+ny*B[1]-c;
+    if(da<=0)out.push(A);
+    if((da<0&&db>0)||(da>0&&db<0)){const t=da/(da-db);out.push([A[0]+t*(B[0]-A[0]),A[1]+t*(B[1]-A[1])])}}
+  return out}
+function cell(P,i,hx,hy,r){let poly=[[-hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]];
+  for(let j=0;j<P.length;j++){if(j===i||!alive[j])continue;
+    let nx=P[j][0]-P[i][0],ny=P[j][1]-P[i][1];const l=Math.hypot(nx,ny);if(l<1e-9)continue;nx/=l;ny/=l;
+    const c=nx*(P[i][0]+P[j][0])/2+ny*(P[i][1]+P[j][1])/2-r;
+    poly=clip(poly,nx,ny,c);if(poly.length<3)return[]}
+  return poly}
+function centroid(P){let A=0,cx=0,cy=0;
+  for(let k=0;k<P.length;k++){const[a,b]=P[k],[c,d]=P[(k+1)%P.length],w=a*d-c*b;A+=w;cx+=(a+c)*w;cy+=(b+d)*w}
+  return Math.abs(A)<1e-12?P[0]:[cx/(3*A),cy/(3*A)]}
+const area=P=>{let A=0;for(let k=0;k<P.length;k++){const[a,b]=P[k],[c,d]=P[(k+1)%P.length];A+=a*d-c*b}return A/2};
+function closestIn(P,q){ // P convex, CCW
+  let inside=true;for(let k=0;k<P.length;k++){const A=P[k],B=P[(k+1)%P.length];if((B[0]-A[0])*(q[1]-A[1])-(B[1]-A[1])*(q[0]-A[0])<0){inside=false;break}}
+  if(inside)return q;let best=null,bd=Infinity;
+  for(let k=0;k<P.length;k++){const A=P[k],B=P[(k+1)%P.length],ex=B[0]-A[0],ey=B[1]-A[1];
+    const t=Math.max(0,Math.min(1,((q[0]-A[0])*ex+(q[1]-A[1])*ey)/(ex*ex+ey*ey||1)));const p=[A[0]+t*ex,A[1]+t*ey],d=Math.hypot(p[0]-q[0],p[1]-q[1]);
+    if(d<bd){bd=d;best=p}}
+  return best}
+
+// ---- isometric curl of the flat sheet into 3D ----
+const curl=(u,v,k,xc)=>Math.abs(k)<1e-4?[xc+u,v,Z0]:[xc+u,Math.sin(k*v)/k,Z0+(1-Math.cos(k*v))/k];
+
+const v3=$('v3'),vf=$('vf'),x3=v3.getContext('2d'),xf=vf.getContext('2d');
+function fit(cv,ctx,asp){const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const w=Math.round(r.width*dpr),h=Math.round(r.width/asp*dpr);if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}
+  ctx.setTransform(dpr,0,0,dpr,0,0);return[r.width,r.width/asp]}
+let yaw=-0.55,pitch=0.55,drag=null;
+v3.style.cursor='grab';v3.style.touchAction='none';
+v3.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY,yaw,pitch];v3.setPointerCapture(e.pointerId)});
+v3.addEventListener('pointermove',e=>{if(!drag)return;yaw=drag[2]+(e.clientX-drag[0])*0.01;pitch=Math.max(-0.1,Math.min(1.5,drag[3]+(e.clientY-drag[1])*0.01))});
+v3.addEventListener('pointerup',()=>drag=null);
+
+let playing=true,xc=-8,su=1,sv=1,k=0,last=performance.now();
+$('vplay').onclick=()=>{playing=!playing;$('vplay').textContent=playing?'Pause':'Play'};
+$('vrestore').onclick=restore;
+$('vkill').onclick=()=>{const idx=alive.map((a,i)=>a?i:-1).filter(i=>i>=0);if(idx.length<=2)return;
+  const i=idx[Math.floor(Math.random()*idx.length)];alive[i]=false;
+  falling.push({i,p:curl(su*S[i][0],sv*S[i][1],k,xc),vz:0,t:0})};
+const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t)};
+
+function frame(now){
+  const dt=Math.max(0,Math.min(0.05,(now-last)/1000));last=now;
+  if(playing){xc+=0.7*dt;if(xc>8)xc=-8}
+  if($('vauto').checked){const a=smooth((6.5-Math.abs(xc))/3);su=1+0.6*a;sv=1-0.45*a;k=0.6*a;
+    $('vsu').value=su*100;$('vsv').value=sv*100;$('vka').value=k*100}
+  else{su=$('vsu').value/100;sv=$('vsv').value/100;k=$('vka').value/100}
+  const hx=2*su,hy=2*sv;
+  // true positions on the flat sheet
+  const P=S.map(s=>[su*s[0],sv*s[1]]);
+  const cells=P.map((_,i)=>alive[i]?cell(P,i,hx,hy,0):[]);
+  const bufs=P.map((_,i)=>alive[i]?cell(P,i,hx,hy,R_BUF):[]);
+  const cents=cells.map(c=>c.length>=3?centroid(c):null);
+  if(playing){const g=$('vgain').value/10,vmax=1.5;
+    const next=P.map((p,i)=>{if(!alive[i]||!cents[i])return p;
+      // small random nudge (like real tracking noise) so Lloyd can leave unstable arrangements
+      let dx=g*(cents[i][0]-p[0])*dt+(Math.random()-.5)*0.3*dt,dy=g*(cents[i][1]-p[1])*dt+(Math.random()-.5)*0.3*dt;const l=Math.hypot(dx,dy),m=vmax*dt;if(l>m&&l>0){dx*=m/l;dy*=m/l}
+      return bufs[i].length>=3?closestIn(bufs[i],[p[0]+dx,p[1]+dy]):p});
+    S=next.map(p=>[p[0]/su,p[1]/sv]);
+    falling.forEach(f=>{f.vz-=9*dt;f.p[2]=Math.max(0,f.p[2]+f.vz*dt);f.t+=dt});falling=falling.filter(f=>f.t<2)}
+  const P2=S.map(s=>[su*s[0],sv*s[1]]),Q=P2.map(p=>curl(p[0],p[1],k,xc));
+  let ds=Infinity,d3=Infinity,ij=null;const ids=alive.map((a,i)=>a?i:-1).filter(i=>i>=0);
+  for(const i of ids)for(const j of ids)if(i<j){ds=Math.min(ds,Math.hypot(P2[i][0]-P2[j][0],P2[i][1]-P2[j][1]));
+    const d=Math.hypot(Q[i][0]-Q[j][0],Q[i][1]-Q[j][1],Q[i][2]-Q[j][2]);if(d<d3){d3=d;ij=[i,j]}}
+  let clr=null;const hit=new Set();
+  ids.forEach(i=>{const p=Q[i];if(Math.abs(p[0])<0.15+R_DRONE){const m=GAP/2-Math.abs(p[1])-R_DRONE;clr=clr===null?m:Math.min(clr,m);if(m<0)hit.add(i)}});
+  const A=4*hx*hy,best=Math.sqrt(2*A/(Math.sqrt(3)*ids.length));
+  drawWorld(Q,cells,ij,hit,hx,hy);drawFlat(P2,cells,bufs,cents,hx,hy);
+  $('vn').textContent=ids.length;$('vsd').textContent=ds.toFixed(2)+' ×';
+  $('vsd').style.color=ds<D_SAFE-1e-3?css('--warn'):css('--ink');
+  $('v3d').textContent=d3.toFixed(2)+' ×';$('varea').textContent=best.toFixed(2)+' ×';
+  $('varea').style.color=best<D_SAFE?css('--warn'):css('--ink');
+  $('vclr').textContent=clr===null?'not in doorway':(clr<0?'COLLISION':clr.toFixed(2)+' ×');
+  $('vclr').style.color=clr!==null&&clr<0?css('--warn'):css('--ink');
+  $('vA').textContent=A.toFixed(1);
+  requestAnimationFrame(frame);
+}
+
+function drawWorld(Q,cells,ij,hit,hx,hy){
+  const[W,H]=fit(v3,x3,16/9),sc=W/13,ox=W/2,oy=H*0.6;
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const Sc=p=>{const x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z=p[2]-1;return[ox+x1*sc,oy-(z*cp+y1*sp)*sc,-y1*cp+z*sp]};
+  const line=(a,b)=>{const A=Sc(a),B=Sc(b);x3.beginPath();x3.moveTo(A[0],A[1]);x3.lineTo(B[0],B[1]);x3.stroke()};
+  const poly=pts=>{x3.beginPath();pts.map(Sc).forEach((p,i)=>i?x3.lineTo(p[0],p[1]):x3.moveTo(p[0],p[1]));x3.closePath()};
+  x3.clearRect(0,0,W,H);
+  x3.strokeStyle=css('--line');x3.lineWidth=1;
+  for(let g=-8;g<=8;g+=2)line([g,-4,0],[g,4,0]);for(let g=-4;g<=4;g+=2)line([-8,g,0],[8,g,0]);
+  const T=0.15,Hh=3.2;
+  for(const s of[1,-1]){const y0=s*GAP/2,y1=s*4;
+    x3.fillStyle=css('--muted');x3.globalAlpha=.16;poly([[-T,y0,0],[-T,y1,0],[-T,y1,Hh],[-T,y0,Hh]]);x3.fill();
+    x3.globalAlpha=.28;poly([[-T,y0,Hh],[-T,y1,Hh],[T,y1,Hh],[T,y0,Hh]]);x3.fill();
+    x3.globalAlpha=.7;x3.strokeStyle=css('--muted');poly([[-T,y0,0],[-T,y1,0],[-T,y1,Hh],[-T,y0,Hh]]);x3.stroke();x3.globalAlpha=1}
+  // cells mapped onto the curled sheet (edges subdivided so they follow the curl)
+  const lift=p=>curl(p[0],p[1],k,xc);
+  cells.forEach((c,i)=>{if(c.length<3)return;const pts=[];
+    for(let e=0;e<c.length;e++){const A=c[e],B=c[(e+1)%c.length];for(let s=0;s<8;s++)pts.push(lift([A[0]+(B[0]-A[0])*s/8,A[1]+(B[1]-A[1])*s/8]))}
+    x3.fillStyle=colors[i];x3.globalAlpha=.16;poly(pts);x3.fill();x3.globalAlpha=.55;x3.strokeStyle=colors[i];x3.lineWidth=1;x3.stroke();x3.globalAlpha=1});
+  // sheet outline
+  x3.strokeStyle=css('--sheet');x3.lineWidth=1.5;
+  const edge=[];for(let s=0;s<=20;s++)edge.push([-hx+2*hx*s/20,-hy]);for(let s=0;s<=20;s++)edge.push([hx,-hy+2*hy*s/20]);
+  for(let s=0;s<=20;s++)edge.push([hx-2*hx*s/20,hy]);for(let s=0;s<=20;s++)edge.push([-hx,hy-2*hy*s/20]);
+  poly(edge.map(lift));x3.stroke();
+  // falling drones
+  falling.forEach(f=>{const p=Sc(f.p);x3.globalAlpha=Math.max(0,1-f.t/2);x3.fillStyle=css('--warn');x3.beginPath();x3.arc(p[0],p[1],7,0,7);x3.fill();x3.globalAlpha=1});
+  const pts=Q.map((p,i)=>({i,s:Sc(p),g:Sc([p[0],p[1],0])})).filter(d=>alive[d.i]).sort((a,b)=>a.s[2]-b.s[2]);
+  x3.strokeStyle=css('--ghost');pts.forEach(d=>{x3.beginPath();x3.moveTo(d.s[0],d.s[1]);x3.lineTo(d.g[0],d.g[1]);x3.stroke()});
+  if(ij){x3.strokeStyle=css('--warn');x3.lineWidth=2.5;line(Q[ij[0]],Q[ij[1]])}
+  pts.forEach(d=>{x3.fillStyle=hit.has(d.i)?css('--warn'):colors[d.i];x3.beginPath();x3.arc(d.s[0],d.s[1],7,0,7);x3.fill();
+    x3.fillStyle='#fff';x3.font='600 9px system-ui';x3.textAlign='center';x3.textBaseline='middle';x3.fillText(d.i+1,d.s[0],d.s[1]+.5)});
+}
+
+function drawFlat(P,cells,bufs,cents,hx,hy){
+  const[W]=fit(vf,xf,1),sc=W/7.6,o=W/2,X=p=>o+p[0]*sc,Y=p=>o-p[1]*sc;
+  xf.clearRect(0,0,W,W);
+  const path=c=>{xf.beginPath();c.forEach((p,i)=>i?xf.lineTo(X(p),Y(p)):xf.moveTo(X(p),Y(p)));xf.closePath()};
+  cells.forEach((c,i)=>{if(c.length<3)return;xf.fillStyle=colors[i];xf.globalAlpha=.18;path(c);xf.fill();
+    xf.globalAlpha=.8;xf.strokeStyle=colors[i];xf.lineWidth=1.2;xf.stroke();xf.globalAlpha=1});
+  xf.setLineDash([3,3]);xf.strokeStyle=css('--muted');xf.lineWidth=1;
+  bufs.forEach(c=>{if(c.length>=3){path(c);xf.stroke()}});xf.setLineDash([]);
+  xf.strokeStyle=css('--sheet');xf.lineWidth=2;xf.strokeRect(X([-hx,0]),Y([0,hy]),2*hx*sc,2*hy*sc);
+  xf.strokeStyle=css('--ink');xf.lineWidth=1.2;
+  cents.forEach((c,i)=>{if(!c||!alive[i])return;const x=X(c),y=Y(c);xf.beginPath();xf.moveTo(x-3,y-3);xf.lineTo(x+3,y+3);xf.moveTo(x+3,y-3);xf.lineTo(x-3,y+3);xf.stroke()});
+  P.forEach((p,i)=>{if(!alive[i])return;xf.fillStyle=colors[i];xf.beginPath();xf.arc(X(p),Y(p),7,0,7);xf.fill();
+    xf.fillStyle='#fff';xf.font='600 9px system-ui';xf.textAlign='center';xf.textBaseline='middle';xf.fillText(i+1,X(p),Y(p)+.5)});
+  xf.fillStyle=css('--muted');xf.font='12px system-ui';xf.textAlign='center';xf.fillText('u (travel direction) →',o,W-8);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

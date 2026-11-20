@@ -1,0 +1,184 @@
+% ============================== PART II ==============================
+\section{Decisions over time: MDPs and reinforcement learning}
+\label{sec:rl}
+
+\subsection{The language of sequential decisions}
+Classification makes one decision. A robot makes a decision every few milliseconds, and each one changes what it will see next. The standard model is the \textbf{Markov decision process} (MDP):
+\begin{itemize}
+\item a state $s_t$ (for a drone: position, velocity, attitude, the obstacles around it);
+\item an action $a_t$ (thrust and body rates, or a velocity command);
+\item dynamics $p(s_{t+1}\mid s_t,a_t)$: what happens next;
+\item a reward $r_t=r(s_t,a_t)$: how good that step was;
+\item a policy $\pi(a_t\mid s_t)$: the controller, which is what we want to learn.
+\end{itemize}
+The goal is to maximise the expected \textbf{return} $G=\sum_{t\ge0}\gamma^t r_t$, where the discount $\gamma\in(0,1)$ (say $0.99$) makes near rewards count more than far ones. ``Markov'' means $s_t$ contains everything needed to predict the future; the past adds nothing.
+
+\begin{probbox}{the Markov property, expected return and the geometric series}
+\textbf{Markov property, as a formula:} $p(s_{t+1}\mid s_t,a_t,s_{t-1},a_{t-1},\dots,s_0)=p(s_{t+1}\mid s_t,a_t)$.
+
+\textbf{Why an expectation.} The dynamics and usually the policy are random, so the return $G$ is a random variable. We maximise its expectation $\E[G]$, the average return over many runs.
+
+\textbf{Why the return is finite.} If every reward satisfies $|r_t|\le r_{\max}$, then $|G|\le r_{\max}\sum_{t\ge0}\gamma^t$. The geometric series: let $S=1+\gamma+\gamma^2+\dots$; then $\gamma S=\gamma+\gamma^2+\dots$, and subtracting, $S-\gamma S=1$, so $S=\dfrac{1}{1-\gamma}$ for $0\le\gamma<1$. Hence $|G|\le r_{\max}/(1-\gamma)$. With $\gamma=0.99$ the sum is 100: the discount makes the agent look roughly 100 steps ahead.
+\end{probbox}
+
+A real robot does not see the state. It sees an \textbf{observation} $o_t$, such as a camera image, which is only part of the state. This is a \emph{partially observable} MDP (POMDP). The usual fix is to keep a memory, a hidden state $\h_t$ built from all past observations and actions. Keep this in mind: the hidden state of a world model (Section~\ref{sec:dreamer}) is exactly this memory.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small}]
+\node[bx=cA, minimum width=3cm] (ag) at (0,0) {policy $\pi(a\mid o)$\\(the controller)};
+\node[bx=cC, minimum width=3cm] (env) at (7,0) {world\\$s_{t+1}\sim p(\cdot\mid s_t,a_t)$};
+\draw[arr] (ag.north) to[bend left=22] node[above]{action $a_t$} (env.north);
+\draw[arr] (env.south) to[bend left=22] node[below]{observation $o_{t+1}$, reward $r_t$} (ag.south);
+\node[bx=cD, minimum width=2.6cm, font=\scriptsize] (wm) at (3.5,0) {world model\\$\hat p(\cdot\mid s_t,a_t)$\\(Part IV)};
+\draw[darr] (ag.east)--(wm.west) node[midway,above,font=\scriptsize]{try $a$};
+\draw[darr] (wm.east)--(env.west) node[midway,above,font=\scriptsize]{copy of};
+\end{tikzpicture}
+\caption{The agent--environment loop from the course's reinforcement-learning section. A world model (dashed) is a learned copy of the right-hand box that the agent can query without moving.}
+\label{fig:loop}
+\end{figure}
+
+\begin{bridgebox}
+Course book, the reinforcement-learning loop in Part I. There, RL was ``learn from rewards by trial and error''. Here we add the pieces needed to read papers: states versus observations, the discount, value functions, and the split into model-free and model-based methods.
+\end{bridgebox}
+
+\subsection{Values and policy gradients in one page}
+The \textbf{value} $V^\pi(s)$ is the expected return from state $s$ when following $\pi$. The \textbf{action value} $Q^\pi(s,a)$ is the same, but taking action $a$ first. They satisfy the Bellman equation
+\begin{equation}
+Q^\pi(s,a)=r(s,a)+\gamma\,\E_{s'\sim p(\cdot\mid s,a)}\big[V^\pi(s')\big],\label{eq:bellman}
+\end{equation}
+which says: value now $=$ reward now $+$ discounted value of where you land. A neural network trained to satisfy this equation is a \emph{critic}.
+
+\begin{probbox}{deriving the Bellman equation}
+\textbf{Step 1: the return is recursive.} $G_t=r_t+\gamma r_{t+1}+\gamma^2r_{t+2}+\dots=r_t+\gamma\,(r_{t+1}+\gamma r_{t+2}+\dots)=r_t+\gamma G_{t+1}$.
+
+\textbf{Step 2: take expectations.} By definition $Q^\pi(s,a)=\E[G_t\mid s_t=s,a_t=a]$. By linearity,
+\[
+Q^\pi(s,a)=r(s,a)+\gamma\,\E[G_{t+1}\mid s_t=s,a_t=a].
+\]
+\textbf{Step 3: the law of total expectation}, $\E[X]=\E_Y\big[\E[X\mid Y]\big]$ (average within each case of $Y$, then average over the cases). Condition on the next state $s'$:
+\[
+\E[G_{t+1}\mid s,a]=\E_{s'\sim p(\cdot\mid s,a)}\big[\E[G_{t+1}\mid s_{t+1}=s']\big]=\E_{s'}\big[V^\pi(s')\big].
+\]
+The Markov property lets us drop $s,a$ inside the inner expectation: once $s'$ is known, the earlier state adds nothing. Substituting gives equation~\eqref{eq:bellman}.
+\end{probbox}
+
+A \textbf{policy gradient} method changes the policy directly. Its core formula is
+\begin{equation}
+\nabla_\theta J=\E\big[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,A_t\big],\qquad A_t=Q(s_t,a_t)-V(s_t),
+\end{equation}
+where the \emph{advantage} $A_t$ says whether the action was better or worse than usual. In words: make better-than-usual actions more likely and worse-than-usual actions less likely. PPO (Schulman et al., 2017) is the most used version; it limits how far each update can move the policy. An \textbf{actor--critic} method trains a policy (actor) and a value network (critic) together. Dreamer does exactly this, but inside its world model.
+
+\begin{probbox}{deriving the policy gradient (the log-derivative trick)}
+We want $\nabla_\theta\E_{a\sim\pi_\theta}[f(a)]$, the gradient of an average whose \emph{distribution} depends on $\theta$. Write it as a sum and use $\nabla\pi=\pi\,\nabla\log\pi$ (because $\nabla\log\pi=\nabla\pi/\pi$):
+\[
+\nabla_\theta\sum_a\pi_\theta(a)f(a)=\sum_a\nabla_\theta\pi_\theta(a)\,f(a)=\sum_a\pi_\theta(a)\,\nabla_\theta\log\pi_\theta(a)\,f(a)=\E_{a\sim\pi_\theta}\big[f(a)\,\nabla_\theta\log\pi_\theta(a)\big].
+\]
+The right side is an expectation again, so it can be estimated from sampled actions without knowing how $f$ (the environment) works. For whole trajectories, the probability is a product of policy terms and dynamics terms; the log turns it into a sum, and the dynamics terms vanish from the gradient because they do not depend on $\theta$.
+
+\textbf{Why subtracting a baseline is allowed.} For any $b$ that does not depend on the action,
+$\E[b\,\nabla\log\pi]=b\sum_a\nabla\pi(a)=b\,\nabla\sum_a\pi(a)=b\,\nabla1=0$. So replacing $f$ by $f-V(s)$, the advantage, does not change the expected gradient, but it makes the estimate much less noisy.
+\end{probbox}
+
+\subsection{Model-free and model-based RL}
+\begin{itemize}
+\item \textbf{Model-free} RL (PPO, SAC) learns the policy from real or simulated experience and never learns the dynamics. It is simple and robust, but needs millions of steps. That is fine in a fast simulator and impossible on a real drone.
+\item \textbf{Model-based} RL first learns the dynamics $\hat p(s'\mid s,a)$, a world model, and then plans with it or trains the policy on imagined experience. It needs far less real data. It is only as good as the model, and model errors compound over long horizons (Section~\ref{sec:compound}).
+\end{itemize}
+
+\subsection{Simulation, sim-to-real and a drone landmark}
+Most robot RL trains in simulation and then transfers to the real robot. The gap between the two (wrong mass, motor delays, camera noise, aerodynamic effects) is the \textbf{sim-to-real gap}. The standard tool against it is \textbf{domain randomisation}: train on many simulators with randomised masses, delays and textures, so that the real world looks like one more variation.
+
+\begin{paperbox}{Kaufmann et al.\ (2023), ``Champion-level drone racing using deep reinforcement learning'', Nature}
+The \emph{Swift} system beat human world champions in first-person-view drone racing. The policy was trained with model-free RL (PPO) in simulation. Its observations came from onboard vision and inertial sensing. To close the sim-to-real gap, the authors fitted small \emph{residual models} of perception and dynamics from real flight data and added them to the simulator. Lesson for you: on drones, learned control works best when the learning happens in simulation and a small amount of real data is used to correct the simulator, which is a modest form of world model.
+\end{paperbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Why is a single camera image not a Markov state for a drone?
+\item With $\gamma=0.9$, how much is a reward of 1 worth if it arrives 10 steps from now?
+\item Why can't you run PPO directly on a tiny whoop?
+\end{enumerate}
+\emph{Answers: 1) one frame shows position but not velocity, and things outside the view are missing; 2) $0.9^{10}\approx0.35$; 3) it needs millions of trials, most of which would be crashes.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Imitation learning: learning from demonstrations}
+\label{sec:il}
+
+\subsection{Behaviour cloning}
+Rewards are hard to write for ``fold the towel'' or ``fly through the doorway and land on the table''. It is often easier to \emph{show} the robot. A human teleoperates it many times, and we record pairs (observation, action). \textbf{Behaviour cloning} (BC) then fits a policy by supervised learning:
+\begin{equation}
+\pi_\theta=\argmin_\theta\ \frac1N\sum_n -\log\pi_\theta(a_n\mid o_n).
+\end{equation}
+This is the course's regression or classification, with the observation as input and the action as label. Every VLA in Part III is trained mainly this way.
+
+\subsection{The catch: covariate shift}
+In the course, training and test data come from the same distribution. In BC they do not. The policy is trained on states the \emph{expert} visited, but at test time it visits states produced by \emph{its own} actions. A small mistake moves it into a state the expert never showed; there it makes a bigger mistake, and so on. Ross and Bagnell (2010) showed that if the policy errs with probability $\epsilon$ per step, the expected cost over a task of length $T$ can grow like $\epsilon T^2$, instead of the $\epsilon T$ you would expect from independent mistakes.
+
+\begin{probbox}{distribution shift, and where $\epsilon T^2$ comes from}
+\textbf{Covariate shift} means the distribution of inputs changes between training and test while the correct input--output rule stays the same. Behaviour cloning minimises $\E_{s\sim d_{\text{expert}}}[\ell(s)]$, but the cost we care about is $\E_{s\sim d_{\pi}}[\ell(s)]$, where $d_\pi$ is the distribution of states the learner itself visits.
+
+\textbf{Worst-case argument.} Suppose the learner makes a mistake with probability at most $\epsilon$ in any state the expert visits, and that after its first mistake it is lost and pays cost 1 at every remaining step. The probability that the first mistake happens at step $t$ is at most $\epsilon$ (union bound), and it then pays at most $T-t+1$. So
+\[
+\E[\text{cost}]\ \le\ \sum_{t=1}^{T}\epsilon\,(T-t+1)=\epsilon\,\frac{T(T+1)}{2}\approx\frac{\epsilon T^2}{2}.
+\]
+If mistakes did not push the learner off its data, each step would independently cost $\epsilon$ in expectation, $\epsilon T$ in total. DAgger trains on $d_\pi$ itself, which brings the cost back to order $\epsilon T$. Ross and Bagnell also show that the quadratic bound can actually be reached.
+\end{probbox}
+
+Figure~\ref{fig:covshift} shows this on a toy lane-keeping task, $x_{t+1}=x_t+a_t+\text{noise}$. The expert steers with $a=-0.6x$ and stays in a narrow band around the centre (shaded, from $\bandlo$ to $\bandhi$). A degree-5 polynomial fitted to the expert's data is excellent \emph{inside} the band. At $t=10$ a gust pushes the car out of the band. The cloned policy has never seen such a state; its polynomial extrapolates wildly and the car ends at the edge of the road ($x=\pm3$, the clip). The expert recovers at once.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=11cm,height=5.4cm, xmin=0, xmax=40, ymin=-3.2, ymax=3.2, xlabel={time step $t$}, ylabel={lateral position $x$}, legend pos=north east, legend columns=3]
+\fill[cA!30] (axis cs:0,\bandlo) rectangle (axis cs:40,\bandhi);
+\addplot[cB, thick] table[x=t,y=b0]{figs/covshift.dat}; \addlegendentry{behaviour cloning}
+\addplot[cC, thick] table[x=t,y=d0]{figs/covshift.dat}; \addlegendentry{after DAgger}
+\addplot[black, dashed, thick] table[x=t,y=e]{figs/covshift.dat}; \addlegendentry{expert}
+\addplot[cB, thick, forget plot] table[x=t,y=b1]{figs/covshift.dat};
+\addplot[cB, thick, forget plot] table[x=t,y=b2]{figs/covshift.dat};
+\addplot[cB, thick, forget plot] table[x=t,y=b3]{figs/covshift.dat};
+\addplot[cC, thick, forget plot] table[x=t,y=d1]{figs/covshift.dat};
+\addplot[cC, thick, forget plot] table[x=t,y=d2]{figs/covshift.dat};
+\addplot[cC, thick, forget plot] table[x=t,y=d3]{figs/covshift.dat};
+\draw[arr] (axis cs:10,1.6) -- (axis cs:10,0.8) node[pos=0,above,font=\scriptsize]{gust};
+\end{axis}
+\end{tikzpicture}
+\caption{Covariate shift in a toy lane-keeping task (four rollouts each). The shaded band is where the expert's training data lies. After the gust, the cloned policy is outside its data and diverges; the DAgger policy, trained on states the learner itself visited, recovers.}
+\label{fig:covshift}
+\end{figure}
+
+\subsection{Three fixes}
+\begin{enumerate}
+\item \textbf{DAgger} (Ross, Gordon \& Bagnell, 2011): let the learner drive, ask the expert what it \emph{would} have done in the states the learner visited, add these labels to the data, retrain, repeat. This fixes the distribution mismatch and brings the error back to linear in $T$. In Figure~\ref{fig:covshift}, five DAgger rounds were enough. The price is that the expert must be available during training.
+\item \textbf{More diverse data:} include recoveries and disturbances in the demonstrations. Large robot datasets do this implicitly by covering many situations.
+\item \textbf{Action chunking:} predict several future actions at once (next subsection). Fewer decisions per task means fewer chances to drift.
+\end{enumerate}
+
+\subsection{Action chunking and modern BC policies}
+\textbf{ACT} (Zhao et al., 2023, with the ALOHA robot) predicts a \emph{chunk} of the next $k$ actions from one observation, for example $k=100$ steps of joint targets at 50~Hz. The task horizon in ``decisions'' shrinks by a factor $k$, and the chunks give smooth motion. Overlapping chunks are averaged (temporal ensembling). \textbf{Diffusion Policy} (Chi et al., 2023) combines chunking with a diffusion model over the chunk, which handles multimodal demonstrations (Section~\ref{sec:diffusion}). Almost every VLA after 2024 outputs action chunks.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.32cm,every node/.style={font=\scriptsize}]
+\draw[arr] (0,0)--(42,0) node[right]{time};
+\foreach \t in {0,8,16,24,32} {\fill[cA] (\t,0) circle (2.3pt); \node[above] at (\t,0.15) {obs};}
+\foreach \t/\c in {0/cC,8/cD,16/cC,24/cD,32/cC} {\draw[\c, line width=3pt, opacity=0.7] (\t,{-0.35-0.25*mod(\t/8,2)}) -- ++(12,0);}
+\node[anchor=west, align=left] at (0,-1.4) {each observation produces a chunk of $k$ actions (here $k$ covers 12 ticks);\\a new chunk starts every 8 ticks, and the overlaps are blended};
+\end{tikzpicture}
+\caption{Action chunking. The policy is queried at a slow rate, but every query fills a buffer of future actions that a fast loop plays back.}
+\label{fig:chunk}
+\end{figure}
+
+\subsection{Robot data}
+Robot data is expensive: someone has to teleoperate a real robot. The largest open collections are \textbf{Open X-Embodiment} (2023; more than a million trajectories from over twenty robot types, pooled by many labs) and \textbf{DROID} (2024; about 76\,000 teleoperated trajectories with one arm in hundreds of real scenes). By internet standards this is tiny. That shortage is why VLAs start from a VLM pretrained on web images and text, and why world models that can learn from ordinary \emph{video without actions} are so attractive.
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item In your own words: why does the cloned policy in Figure~\ref{fig:covshift} fail even though its training error is tiny?
+\item What does DAgger need that plain BC does not?
+\item If a policy outputs chunks of 50 actions at 50~Hz, how often must the network run?
+\end{enumerate}
+\emph{Answers: 1) its training data covers only the narrow band, and after the gust it is evaluated far outside it, which is extrapolation; 2) an expert who can label new states on demand; 3) at least once per second, and in practice more often (e.g.\ every 0.2--0.5~s) so that it can react.}
+\end{quizbox}

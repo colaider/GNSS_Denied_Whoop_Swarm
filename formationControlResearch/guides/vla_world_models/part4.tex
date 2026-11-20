@@ -1,0 +1,299 @@
+% ============================== PART IV ==============================
+\section{What a world model is}
+\label{sec:wm}
+
+\subsection{Definition}
+A world model is a learned predictor of the consequences of actions:
+\begin{equation}
+\hat p_\phi\big(s_{t+1}\mid s_t,a_t\big)\qquad\text{or, from pixels,}\qquad \hat p_\phi\big(o_{t+1:t+H}\mid o_{\le t},a_{t:t+H-1}\big).
+\end{equation}
+Given what the robot has seen and a sequence of actions it \emph{might} take, the model predicts what it would see and where it would be. It is the right-hand box of Figure~\ref{fig:loop}, learned from data, so the robot can query it without moving.
+
+\begin{bridgebox}
+You have already used a world model. The Santana-style controller on your whoop is built on a linear model of the hovering drone, $\ddot{\vect X}=f_1\vect U-f_2\dot{\vect X}$. That is a hand-derived world model with a few parameters that you identified from flight data. Fitting $\vect x_{t+1}=A\vect x_t+B\vect u_t$ by least squares is linear regression from the course book. Modern world models do the same thing with a neural network, in a learned latent space, from camera images.
+\end{bridgebox}
+
+\subsection{Four ways to use one}
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=5mm and 7mm, every node/.style={font=\small}]
+\node[bx=cD, minimum width=3.2cm, minimum height=1.2cm] (wm) {world model\\$\hat p(o',s'\mid s,a)$};
+\node[bx=cA, above left=6mm and 4mm of wm, text width=3.6cm] (p) {\textbf{1.\ Plan:} try many action sequences in imagination, execute the best (MPC, \S\ref{sec:latentplan})};
+\node[bx=cC, above right=6mm and 4mm of wm, text width=3.6cm] (t) {\textbf{2.\ Train a policy in imagination:} RL on dreamed rollouts (Dreamer, \S\ref{sec:dreamer})};
+\node[bx=cB, below left=6mm and 4mm of wm, text width=3.6cm] (sim) {\textbf{3.\ Simulate:} generate training data or test scenes (Cosmos, Genie, \S\ref{sec:video})};
+\node[bx=gray, below right=6mm and 4mm of wm, text width=3.6cm] (v) {\textbf{4.\ Verify:} check what another policy proposes before acting (\S\ref{sec:combine})};
+\draw[arr] (wm)--(p); \draw[arr] (wm)--(t); \draw[arr] (wm)--(sim); \draw[arr] (wm)--(v);
+\end{tikzpicture}
+\caption{The same learned model can serve four purposes. Use 4 is the one that connects world models to reasoning VLAs.}
+\label{fig:uses}
+\end{figure}
+
+\subsection{The central difficulty: compounding error}
+\label{sec:compound}
+A world model is applied to its own predictions: the predicted $\hat s_{t+1}$ is the input for predicting $\hat s_{t+2}$, and so on. Small one-step errors are fed back and grow. This is the same mechanism as covariate shift in behaviour cloning (Section~\ref{sec:il}): a model meets inputs it produced itself, which differ from its training data.
+
+Figure~\ref{fig:compound} shows the effect on the simplest possible case. The true system rotates a 2-D state by $0.25$~rad per step. A linear model $\hat A$ is fitted by least squares from 25 noisy transitions. Its average one-step error is only \onestep, but after 10 imagined steps the average error is \errten\ and after 40 steps it is \errforty, more than ten times the one-step error.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=9.5cm,height=5cm, xmin=0, xmax=40, ymin=0, xlabel={imagined steps $h$}, ylabel={prediction error $\lVert \hat{\vect x}_h-\vect x_h\rVert$}, legend pos=north west]
+\addplot[cD, very thick] table[x=h,y=mean]{figs/compound.dat}; \addlegendentry{mean over 200 starts}
+\addplot[cD!50, thick, dashed] table[x=h,y=p90]{figs/compound.dat}; \addlegendentry{90th percentile}
+\end{axis}
+\end{tikzpicture}
+\caption{Compounding error of a learned linear model rolled out on its own predictions. One-step accuracy says little about long-horizon accuracy.}
+\label{fig:compound}
+\end{figure}
+
+\begin{probbox}{why the error grows: a derivation for linear models, and the $1/\sqrt N$ rule}
+\textbf{Rollout error.} True system $\x_{h}=A^h\x_0$; model $\hat\x_h=\hat A^h\x_0$ with $\hat A=A+E$ and a small error $E$. Expanding the product and keeping terms with one $E$,
+\[
+\hat A^h=A^h+\sum_{j=0}^{h-1}A^{j}\,E\,A^{h-1-j}+(\text{terms with }E^2,E^3,\dots).
+\]
+For a rotation, $\lVert A\rVert=1$, so each of the $h$ terms has size at most $\lVert E\rVert$: the error is at most about $h\,\lVert E\rVert\,\lVert\x_0\rVert$, growing linearly with the horizon. In Figure~\ref{fig:compound} it grows more slowly than this bound because the rotated error terms partly cancel. For an unstable system ($\lVert A\rVert>1$) the same sum grows exponentially, which is why long imagined rollouts of fast, unstable dynamics such as a drone's are hard.
+
+\textbf{Where $E$ comes from.} Least squares on $N$ noisy transitions estimates each entry of $A$ with a standard error proportional to $\sigma_{\text{noise}}/\sqrt N$, the same $1/\sqrt N$ law as for a sample mean ($\mathrm{Var}(\bar X)=\sigma^2/N$ by the variance rules in Part I). Four times the data halves the model error and so roughly halves the rollout error.
+\end{probbox}
+
+Three standard answers recur in the papers:
+\begin{itemize}
+\item \textbf{Plan over short horizons and replan often} (model predictive control, MPC): only the first action of each plan is executed, and fresh observations correct the model every step.
+\item \textbf{Train on multi-step error}, not just one step, so the model learns to stay consistent with its own predictions.
+\item \textbf{Predict in a latent space} that ignores irrelevant detail, so fewer things can go wrong.
+\end{itemize}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Which of the four uses in Figure~\ref{fig:uses} does your current whoop controller already make of its linear model?
+\item Why does MPC tolerate an imperfect model better than executing one long plan open loop?
+\end{enumerate}
+\emph{Answers: 1) planning/control: the controller inverts the model to choose the command; 2) only the first action is used, and the next plan starts from the newly measured state, so errors cannot accumulate over the whole horizon.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Learning latent dynamics: from ``World Models'' to Dreamer}
+\label{sec:dreamer}
+
+\subsection{The first deep world model}
+\begin{paperbox}{Ha \& Schmidhuber (2018), ``World Models''}
+Three parts: \textbf{V}, a VAE that compresses each frame into a small latent $\z$; \textbf{M}, a recurrent network that predicts the next $\z$ from the current one and the action; \textbf{C}, a tiny linear controller that acts from $\z$ and M's hidden state. The controller was trained entirely inside the ``dream'' produced by M and then transferred to the real game (a car-racing and a first-person shooting environment). It made the idea popular: learn a compact simulator from pixels, then learn to act inside it.
+\end{paperbox}
+
+\subsection{The recurrent state-space model (RSSM)}
+PlaNet (Hafner et al., 2019) and its successors, the Dreamer family, use a model called the RSSM. Its state has two parts: a deterministic memory $\h_t$ (a GRU, a kind of RNN) that carries information over time, and a stochastic latent $\z_t$ that captures what is uncertain at this step.
+\begin{align}
+\text{memory:}\quad & \h_t=f_\phi(\h_{t-1},\z_{t-1},a_{t-1})\\
+\text{prior (imagination):}\quad & \hat\z_t\sim p_\phi(\hat\z_t\mid\h_t)\\
+\text{posterior (with the real image):}\quad & \z_t\sim q_\phi(\z_t\mid\h_t,o_t)\\
+\text{decoders:}\quad & \hat o_t\sim p_\phi(o_t\mid\h_t,\z_t),\qquad \hat r_t\sim p_\phi(r_t\mid\h_t,\z_t)
+\end{align}
+The model is trained to reconstruct the images and rewards and to keep the prior close to the posterior:
+\begin{equation}
+\label{eq:rssmloss}\mathcal L=\sum_t\Big[-\log p(o_t\mid\h_t,\z_t)-\log p(r_t\mid\h_t,\z_t)+\beta\,\mathrm{KL}\big(q(\z_t\mid\h_t,o_t)\,\big\|\,p(\hat\z_t\mid\h_t)\big)\Big].
+\end{equation}
+The KL term is the key: it teaches the prior to predict, without seeing the image, what the posterior will find when it does see it. At planning time only the prior is used, so the model can roll forward without any images at all.
+
+\begin{probbox}{Bayes' rule, prior and posterior, and the derivation of the ELBO}
+\textbf{Bayes' rule.} From $p(z,o)=p(z)p(o\mid z)=p(o)p(z\mid o)$:
+\[
+p(z\mid o)=\frac{p(o\mid z)\,p(z)}{p(o)},\qquad p(o)=\int p(o\mid z)\,p(z)\,\mathrm dz .
+\]
+The \textbf{prior} $p(z)$ is the belief before seeing the image; the \textbf{posterior} $p(z\mid o)$ is the belief after. The integral for $p(o)$ runs over all possible latents, so the posterior cannot be computed exactly. A VAE or RSSM therefore learns an approximation $q(z\mid o)$, the encoder.
+
+\textbf{Derivation of the ELBO} (evidence lower bound). Multiply and divide by $q$ inside the integral, then use Jensen ($\log\E\ge\E\log$, because $\log$ is concave):
+\begin{align*}
+\log p(o)&=\log\E_{z\sim q}\Big[\frac{p(o\mid z)\,p(z)}{q(z\mid o)}\Big]\ \ge\ \E_q\big[\log p(o\mid z)\big]+\E_q\Big[\log\frac{p(z)}{q(z\mid o)}\Big]\\
+&=\underbrace{\E_q[\log p(o\mid z)]}_{\text{reconstruction}}-\underbrace{\mathrm{KL}\big(q(z\mid o)\,\|\,p(z)\big)}_{\text{stay close to the prior}} .
+\end{align*}
+Maximising this bound makes the data likely while keeping the encoder's guesses close to the prior. Its negative is the VAE loss, and the RSSM loss~\eqref{eq:rssmloss} is the same bound written for every time step, with the learned prior $p(\hat\z_t\mid\h_t)$ in place of a fixed $\mathcal N(0,1)$. One can show that the gap in the inequality is exactly $\mathrm{KL}\big(q(z\mid o)\,\|\,p(z\mid o)\big)$: the bound is tight when the encoder matches the true posterior.
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=2.6cm,y=1.1cm,every node/.style={font=\small}]
+\foreach \t/\lab in {0/{t-1},1/{t},2/{t+1},3/{t+2}} {
+  \node[circle,draw=inkm,fill=cD!15,minimum size=8mm] (h\t) at (\t,0) {$\h_{\lab}$};
+  \node[circle,draw=inkm,fill=cC!15,minimum size=8mm] (z\t) at (\t,-1.3) {$\z_{\lab}$};
+  \draw[arr] (h\t)--(z\t);
+}
+\foreach \t in {0,1} {\node[bx=gray,minimum height=0.6cm] (o\t) at (\t,-2.6) {$o$}; \draw[arr] (o\t)--(z\t);}
+\foreach \t in {2,3} {\node[lbl] at (\t,-2.6) {no image:\\prior only};}
+\foreach \a/\b in {0/1,1/2,2/3} {\draw[arr] (h\a)--(h\b); \draw[arr] (z\a)--(h\b);
+  \node[font=\scriptsize,color=cB] at (\a+0.5,0.45) {$a$};}
+\draw[gridc, dashed] (1.5,0.8)--(1.5,-3);
+\node[lbl] at (0.5,0.95) {observed past};
+\node[lbl] at (2.5,0.95) {imagined future};
+\end{tikzpicture}
+\caption{The RSSM unrolled in time. In the past, each $\z$ is inferred from a real image. In the future, $\z$ comes from the prior alone, driven only by the chosen actions $a$.}
+\label{fig:rssm}
+\end{figure}
+
+\subsection{Dreamer: learning to act inside the model}
+Dreamer (Hafner et al., 2020) adds an actor--critic (Section~\ref{sec:rl}) that is trained \emph{only on imagined rollouts}: start from real latent states, imagine 15 or so steps with the prior and the actor's actions, predict the rewards, and train the critic and the actor on these dreams. Real interaction is used only to collect data and improve the model. \textbf{DreamerV3} (Hafner et al., 2023; published in Nature in 2025) made this robust across very different domains with a single set of hyperparameters, using tricks such as discrete latents (32 categorical variables with 32 classes each) and a ``symlog'' transform that tames very large and very small rewards. It was the first method to collect diamonds in Minecraft from scratch without human data.
+
+\begin{paperbox}{Romero et al.\ (2025), ``Dream to Fly: Model-Based RL for Vision-Based Drone Flight'' (University of Zurich)}
+Trains a quadrotor to fly through gates from raw camera pixels using DreamerV3, with the policy outputting collective thrust and body rates. The authors report that a model-free PPO baseline failed to learn from pixels in their setting, while the world-model approach succeeded, and that the policy transferred to a real quadrotor. The closest existing work to ``a world model for drone flight''. A 2026 follow-up from NTNU (Zanatta, Malczyk \& Alexis) studies how well such Dreamer world models generalise for depth-based quadrotor navigation, and finds that the latent size and training sequence length matter most.
+\end{paperbox}
+
+\subsection{Models without a decoder}
+Reconstructing every pixel wastes capacity on textures that do not matter for control. \textbf{TD-MPC2} (Hansen et al., 2024) learns a latent model trained only to predict rewards, values and its own future latents, without a decoder, and plans with it (Section~\ref{sec:latentplan}). \textbf{MuZero} (Schrittwieser et al., 2020) did the same for board games and Atari. The cost: you can no longer look at what the model imagines, which matters if you want to \emph{explain} or \emph{verify} a plan.
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item In the RSSM, which part carries memory over time and which part represents uncertainty?
+\item What does the KL term teach the prior?
+\item Why does Dreamer need far fewer real interactions than PPO?
+\end{enumerate}
+\emph{Answers: 1) $\h_t$ carries memory, $\z_t$ is stochastic; 2) to predict, without seeing the image, what the posterior will infer from it; 3) most of the policy's training happens on imagined rollouts, and real data is used only to improve the model.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Planning with a learned model}
+\label{sec:latentplan}
+
+\subsection{Model predictive control with a world model}
+The planning loop is the MPC you know from control engineering, with the learned model in place of the equations:
+\begin{algbox}[MPC with a world model]
+At every control step:
+\begin{enumerate}[leftmargin=*]
+\item Encode the current observation (and history) into a latent state.
+\item Search for the action sequence $a_{t:t+H-1}$ whose imagined outcome has the lowest cost (or highest reward).
+\item Execute only the first action (or the first few).
+\item Observe again and repeat.
+\end{enumerate}
+\end{algbox}
+The cost can be a learned reward, or, very commonly, the \textbf{distance between the predicted latent and the latent of a goal image}: ``make the future look like this picture''.
+
+\subsection{The cross-entropy method (CEM)}
+The search in step 2 is usually done by sampling, because the model is a neural network and gradients through long rollouts are unreliable. The \textbf{cross-entropy method} is the simplest and most used:
+\begin{algbox}[Cross-entropy method]
+Start with a Gaussian over action sequences, mean $\bm\mu$ and standard deviation $\bm\sigma$. Repeat a few times:
+\begin{enumerate}[leftmargin=*]
+\item Sample $N$ action sequences from $\mathcal N(\bm\mu,\bm\sigma^2)$.
+\item Imagine each one with the world model and compute its cost.
+\item Keep the $K$ best (the \emph{elites}).
+\item Set $\bm\mu$ and $\bm\sigma$ to the mean and standard deviation of the elites.
+\end{enumerate}
+Return $\bm\mu$.
+\end{algbox}
+
+Figure~\ref{fig:cem} runs CEM on a toy: choose a 2-D waypoint that is close to the goal at $(1.6,1.2)$ and avoids a cost bump (an obstacle) at $(0.8,0.6)$. With $N=50$ samples and $K=8$ elites, the mean moves from the start $(0,0)$ to $(\cemmuxb,\cemmuyb)$ after two iterations and to $(\cemmuxc,\cemmuyc)$ after four: on the goal, with the spread shrinking around it. \textbf{MPPI} is a close relative that weights all samples by $e^{-\text{cost}/\lambda}$ instead of keeping a hard set of elites; TD-MPC2 uses it.
+
+\begin{probbox}{CEM refits a Gaussian by maximum likelihood; MPPI is a softmax}
+\textbf{Derivation.} Fit $\mathcal N(\mu,\sigma^2)$ to the $K$ elites $x_1,\dots,x_K$ by maximum likelihood (first box of Part I). The log-likelihood is
+\[
+\ell(\mu,\sigma^2)=-\frac K2\log(2\pi\sigma^2)-\sum_{i=1}^K\frac{(x_i-\mu)^2}{2\sigma^2}.
+\]
+Setting $\partial\ell/\partial\mu=\sum_i(x_i-\mu)/\sigma^2=0$ gives $\mu=\frac1K\sum_ix_i$, the sample mean. Setting $\partial\ell/\partial\sigma^2=-\frac{K}{2\sigma^2}+\frac{\sum_i(x_i-\mu)^2}{2\sigma^4}=0$ gives $\sigma^2=\frac1K\sum_i(x_i-\mu)^2$, the sample variance. So step 4 of CEM is maximum likelihood on the elites. The name: this is the same as minimising the cross-entropy between the elite distribution and the sampling distribution. (In the toy of Figure~\ref{fig:cem}, $0.02$ is added to $\sigma$ so that the search never collapses completely.)
+
+\textbf{MPPI.} The weights $w_i=e^{-c_i/\lambda}/\sum_je^{-c_j/\lambda}$ are a softmax of the negative costs at temperature $\lambda$ (see the softmax box). As $\lambda\to0$ only the best sample counts; as $\lambda\to\infty$ all samples count equally. The new mean is $\sum_iw_ix_i$.
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\pgfplotsset{cemax/.style={width=5.4cm,height=5.4cm, xmin=-0.6, xmax=2.4, ymin=-0.6, ymax=2.4, axis equal image, grid=none, xtick={0,1,2}, ytick={0,1,2}}}
+\begin{axis}[cemax, title={iteration 1}, ylabel={$a_2$}, xlabel={$a_1$}]
+\input{figs/cem_contours.tex}
+\addplot[only marks, mark=*, mark size=1.2pt, color=cA!60] table{figs/cem_all_a.dat};
+\addplot[only marks, mark=*, mark size=1.8pt, color=cB] table{figs/cem_el_a.dat};
+\addplot[only marks, mark=x, mark size=4pt, very thick, color=black] coordinates {(\cemmuxa,\cemmuya)};
+\addplot[only marks, mark=star, mark size=4pt, color=cC, very thick] coordinates {(1.6,1.2)};
+\end{axis}
+\begin{axis}[cemax, xshift=5.2cm, title={iteration 3}, yticklabels={}, xlabel={$a_1$}]
+\input{figs/cem_contours.tex}
+\addplot[only marks, mark=*, mark size=1.2pt, color=cA!60] table{figs/cem_all_b.dat};
+\addplot[only marks, mark=*, mark size=1.8pt, color=cB] table{figs/cem_el_b.dat};
+\addplot[only marks, mark=x, mark size=4pt, very thick, color=black] coordinates {(\cemmuxb,\cemmuyb)};
+\addplot[only marks, mark=star, mark size=4pt, color=cC, very thick] coordinates {(1.6,1.2)};
+\end{axis}
+\begin{axis}[cemax, xshift=10.4cm, title={iteration 5}, yticklabels={}, xlabel={$a_1$}]
+\input{figs/cem_contours.tex}
+\addplot[only marks, mark=*, mark size=1.2pt, color=cA!60] table{figs/cem_all_c.dat};
+\addplot[only marks, mark=*, mark size=1.8pt, color=cB] table{figs/cem_el_c.dat};
+\addplot[only marks, mark=x, mark size=4pt, very thick, color=black] coordinates {(\cemmuxc,\cemmuyc)};
+\addplot[only marks, mark=star, mark size=4pt, color=cC, very thick] coordinates {(1.6,1.2)};
+\end{axis}
+\end{tikzpicture}
+\caption{CEM on a 2-D toy cost (grey contours: goal at the teal star, a bump around $(0.8,0.6)$). Blue: 50 samples. Orange: the 8 elites. Black cross: the sampling mean used in that iteration. The distribution moves to the goal and contracts.}
+\label{fig:cem}
+\end{figure}
+
+\subsection{Predicting embeddings instead of pixels: JEPA}
+Yann LeCun's \textbf{joint-embedding predictive architecture} (JEPA, 2022) argues that a world model should not predict pixels at all. The future is full of unpredictable details (leaves moving, reflections), and a pixel model spends its effort on them. A JEPA encodes both the present and the future with encoders and trains a \emph{predictor} to map the present embedding (plus the action) to the future embedding. The loss is measured in embedding space (Figure~\ref{fig:jepa}). A trivial solution, where every image maps to the same embedding, must be prevented, for example by computing the target embedding with a slowly updated copy of the encoder.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4mm and 7mm, every node/.style={font=\small}]
+\node[bx=gray] (o) {frame $o_t$};
+\node[bx=cA, right=of o] (e) {encoder};
+\node[bx=cD, right=of e] (p) {predictor\\$+$ action $a_t$};
+\node[bx=cC, right=of p] (zh) {predicted\\embedding};
+\node[bx=gray, below=9mm of o] (o2) {frame $o_{t+1}$};
+\node[bx=cA, right=of o2] (e2) {target encoder\\(slow copy)};
+\node[bx=cC, right=26mm of e2] (z2) {target\\embedding};
+\draw[arr] (o)--(e); \draw[arr] (e)--(p); \draw[arr] (p)--(zh); \draw[arr] (o2)--(e2); \draw[arr] (e2)--(z2);
+\draw[<->, thick, cB] (zh)--(z2) node[midway,right,font=\scriptsize,align=left]{loss in\\embedding\\space};
+\end{tikzpicture}
+\caption{A JEPA-style world model predicts the \emph{embedding} of the next frame, not the frame itself. A pixel world model would instead decode back to an image $\hat o_{t+1}$ and compare pixels.}
+\label{fig:jepa}
+\end{figure}
+
+\begin{paperbox}{Assran et al.\ (2025), ``V-JEPA 2: Self-Supervised Video Models Enable Understanding, Prediction and Planning'' (Meta)}
+Pre-trains a JEPA video encoder on more than a million hours of internet video, with no actions and no labels. Then trains a small action-conditioned predictor, V-JEPA 2-AC, on top of the frozen encoder, using less than 62 hours of unlabelled robot-arm videos with their actions. Planning: given a goal image, use CEM to find the actions whose predicted embedding is closest to the goal's embedding. The authors report zero-shot pick-and-place on robot arms in labs where no data had been collected. Lesson: most of a world model can be learned from ordinary video; only a thin action-conditioned part needs robot data.
+\end{paperbox}
+
+\begin{paperbox}{Zhou, Pan, LeCun \& Pinto (ICML 2025), ``DINO-WM: World Models on Pre-trained Visual Features enable Zero-shot Planning''}
+Uses frozen DINOv2 patch features as the latent state and trains only a transformer predictor of future patch features, from offline trajectories. Planning with CEM towards a goal image's features solves navigation and manipulation tasks at test time without expert demonstrations, reward models or task-specific training. A simple and reproducible starting point if you want to build your own world model.
+\end{paperbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item In Figure~\ref{fig:cem}, why do the samples not end up on the obstacle even though the straight line from start to goal passes near it?
+\item What does a JEPA lose compared with a pixel model, and what does it gain?
+\item Why is a goal \emph{image} a convenient way to give a world-model planner a task?
+\end{enumerate}
+\emph{Answers: 1) samples near the bump have high cost and are never elites; 2) it loses the ability to show you a picture of the prediction, and gains efficiency by ignoring unpredictable detail; 3) the cost is just the distance between embeddings, so no reward function has to be designed.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Video world models and world foundation models}
+\label{sec:video}
+
+At the other end of the spectrum are models that generate realistic video. They are trained on huge video collections, usually as diffusion or autoregressive transformers over video tokens, and conditioned on text or actions.
+\begin{itemize}
+\item \textbf{Genie} (Bruce et al., 2024, Google DeepMind): learned interactive 2-D game worlds from internet gameplay videos \emph{without action labels}. A latent action model inferred a small set of discrete ``actions'' from consecutive frames; the world model was then conditioned on them. This shows how a world model can learn controllability from video alone.
+\item \textbf{UniSim} (Yang et al., 2023): a video model conditioned on actions and language, used as a simulator to train policies.
+\item \textbf{Cosmos} (NVIDIA, 2025): a platform of open ``world foundation models'' (diffusion and autoregressive) intended for physical AI: generating synthetic training data and testing policies for robots and cars.
+\item \textbf{Genie 3} (Google DeepMind, announced August 2025): generates interactive 3-D worlds from text in real time, at 720p and 24 frames per second, and stays consistent for several minutes. At the time of writing it is a research preview.
+\end{itemize}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+ & Latent predictive models (Dreamer, TD-MPC2, DINO-WM, V-JEPA 2) & Pixel generative models (Genie, UniSim, Cosmos) \\
+\midrule
+Predicts & compact latent states or embeddings & images or video \\
+Speed & fast enough for MPC in a control loop & slow; many network passes per frame \\
+Best use & planning and policy learning & simulation, data generation, testing \\
+Can a human inspect the prediction? & not directly (unless there is a decoder) & yes \\
+Main weakness & needs care against trivial solutions; less general & physically wrong ``hallucinations''; drift over long horizons \\
+\bottomrule
+\end{tabularx}
+\caption{The two families of world models.}
+\label{tab:wmfam}
+\end{table}
+
+\begin{paperbox}{Alrasheed, Azam \& Akhtar (2026), ``The Planning Limits of Latent World Models''}
+Tests when latent world models actually help planning. Finding: a world model is useful for planning only when the goal lies within, or slightly beyond, the trajectory it can imagine. Used inside that range, it improves a VLA by choosing among eight action candidates the VLA proposes; this raised success from 65\% to 77\% over 16 tasks. Lesson: today, the world model is best used as a \emph{critic of a policy's proposals} over short horizons, not as a stand-alone planner over long ones.
+\end{paperbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item How can Genie learn which ``actions'' exist if its training videos have no action labels?
+\item Which family of Table~\ref{tab:wmfam} would you use inside a 10~Hz drone planning loop on a ground-station GPU, and why?
+\end{enumerate}
+\emph{Answers: 1) a latent action model infers, from pairs of consecutive frames, a small discrete code that explains the change; those codes become the actions; 2) a latent predictive model, because it is fast enough; a pixel model can be used offline to generate training data or test scenes.}
+\end{quizbox}

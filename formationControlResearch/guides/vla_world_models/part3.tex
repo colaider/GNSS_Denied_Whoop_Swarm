@@ -1,0 +1,227 @@
+% ============================== PART III ==============================
+\section{Vision-language-action models}
+\label{sec:vla}
+
+\subsection{What a VLA is}
+A vision-language-action model is a policy
+\begin{equation}
+\pi_\theta\big(\,a_{t:t+k}\ \big|\ \text{images}_t,\ \text{instruction},\ \text{robot state}_t\big),
+\end{equation}
+built by taking a pretrained vision-language model (Figure~\ref{fig:vlm}) and teaching it to output an action chunk instead of, or in addition to, text. It is trained by behaviour cloning (Section~\ref{sec:il}) on robot demonstrations, usually mixed with some of the original web data so that it keeps its general knowledge. The hope is that the VLM's knowledge of objects, words and scenes transfers: a robot that was never shown a ``dinosaur toy'' can still pick one up, because the VLM knows what a dinosaur looks like.
+
+\subsection{Three ways to output actions}
+\label{sec:actrep}
+\textbf{1.\ Actions as tokens (RT-1, RT-2, OpenVLA).} Clip each action dimension to its range and cut the range into 256 equal bins. Each bin becomes a token, and the language model predicts the action tokens one after another with its normal softmax, exactly like words. RT-2 and OpenVLA reuse 256 rarely used tokens of the vocabulary for this.
+
+\begin{examplebox}
+An end-effector velocity in $[-1,1]$~m/s with 256 bins gives a bin width of $2/256\approx0.0078$~m/s. The value $0.30$ falls into bin $\lfloor (0.30+1)/2\cdot256\rfloor=\lfloor166.4\rfloor=166$. Decoding takes the bin centre, $-1+(166+0.5)\cdot 2/256\approx0.3008$~m/s, so the rounding error is under 1~mm/s. A 7-dimensional arm action (3 position, 3 rotation, 1 gripper) is 7 tokens, generated one by one.
+\end{examplebox}
+
+\begin{probbox}{the rounding error of action bins: the uniform distribution}
+If the true value is equally likely to be anywhere inside its bin of width $\Delta$, the rounding error $e$ is \textbf{uniform} on $[-\Delta/2,\Delta/2]$, with density $1/\Delta$ there. Its mean is 0 by symmetry, and its variance is
+\[
+\mathrm{Var}(e)=\int_{-\Delta/2}^{\Delta/2}e^2\,\frac{1}{\Delta}\,\mathrm de=\frac1\Delta\Big[\frac{e^3}{3}\Big]_{-\Delta/2}^{\Delta/2}=\frac1\Delta\cdot\frac{2}{3}\cdot\frac{\Delta^3}{8}=\frac{\Delta^2}{12}.
+\]
+So the typical (root-mean-square) error is $\Delta/\sqrt{12}\approx0.29\,\Delta$. For $\Delta=0.0078$~m/s that is about $0.0023$~m/s, and the worst case is $\Delta/2\approx0.0039$~m/s.
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.6cm,every node/.style={font=\scriptsize}]
+\foreach \i in {0,...,15} \draw[draw=white,fill=cA!\the\numexpr 8+5*\i\relax] (\i,0) rectangle ++(1,0.6);
+\fill[cB] (10.4,0.3) circle (3pt);
+\node[below] at (0,0) {$-1$}; \node[below] at (16,0) {$+1$};
+\node[above,color=cB] at (10.4,0.65) {$a=0.30$};
+\draw[arr] (10.5,-0.15) -- (10.5,-0.9) node[below,align=center]{token ``bin 166''\\(drawn with 16 of the 256 bins)};
+\end{tikzpicture}
+\caption{Action tokenisation: a continuous value becomes the index of its bin, which the language model predicts like a word.}
+\end{figure}
+
+Tokens are simple and reuse the language model unchanged, and the softmax can represent several modes. They are slow (one network pass per token, and seven or more tokens per time step), and they are coarse for very precise or high-frequency control.
+
+\textbf{2.\ Compressed action tokens (FAST, Pertsch et al., 2025).} Take a whole chunk of actions, apply a discrete cosine transform (the same transform JPEG uses for images), keep the important coefficients, and compress them with byte-pair encoding. A smooth one-second chunk becomes a few dozen tokens instead of hundreds, which makes token-based VLAs much faster to train on high-frequency data.
+
+\textbf{3.\ A continuous action expert ($\pi_0$, GR00T N1).} Keep the VLM for understanding, and add a separate, smaller transformer, the \emph{action expert}, that produces a continuous action chunk with flow matching or diffusion (Section~\ref{sec:diffusion}). The action expert attends to the VLM's internal tokens. This is the dominant design in 2025--2026.
+
+\subsection{One forward pass, step by step}
+Figure~\ref{fig:pi0} follows a $\pi_0$-style model through one control step.
+\begin{enumerate}
+\item Each camera image ($224\times224$) is cut into patches and encoded into a few hundred tokens by the vision encoder.
+\item The instruction ``put the red cube in the box'' becomes about ten text tokens.
+\item The VLM processes images and text together and produces a sequence of internal feature vectors.
+\item The action expert receives the robot's joint state, a chunk of 50 \emph{noisy} actions and the flow time $\tau$. Its tokens attend to the VLM features.
+\item It predicts the velocity field; ten Euler steps turn noise into a clean chunk of 50 actions.
+\item A low-level controller executes the chunk while the next one is being computed.
+\end{enumerate}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=5mm and 4mm, every node/.style={font=\footnotesize}]
+\node[bx=gray] (img) {camera\\images};
+\node[bx=gray, below=of img] (txt) {instruction\\text};
+\node[bx=cA, right=of img] (ve) {vision\\encoder};
+\node[bx=gray, right=of txt] (tok) {tokenizer};
+\node[bx=cD, anchor=west, minimum height=2.6cm, text width=2.15cm] (vlm) at ($(tok.east)!0.5!(tok.east|-ve.center)+(0.7,0)$) {pretrained VLM\\(e.g.\ 3B params)\\[2pt]\scriptsize ``understanding''};
+\node[bx=cB, right=9mm of vlm, minimum height=2.6cm, text width=1.9cm] (ae) {action expert\\(e.g.\ 300M)\\flow matching\\[2pt]\scriptsize ``motor skill''};
+\node[bx=gray, above=of ae] (st) {robot state +\\noisy chunk};
+\node[bx=cC, right=of ae] (ch) {action chunk\\50 steps};
+\node[bx=gray, right=of ch] (ll) {low-level\\controller};
+\draw[arr] (img)--(ve); \draw[arr] (txt)--(tok); \draw[arr] (ve)--(vlm.west|-ve); \draw[arr] (tok)--(vlm.west|-tok);
+\draw[arr] (vlm)--(ae) node[midway,above,font=\scriptsize]{attend}; \draw[arr] (st)--(ae); \draw[arr] (ae)--(ch); \draw[arr] (ch)--(ll);
+\node[lbl, below=1mm of ae] {repeated $\times10$ (flow steps)};
+\end{tikzpicture}
+\caption{A $\pi_0$-style VLA. The VLM supplies understanding of the scene and the instruction; the action expert turns it into a smooth continuous action chunk.}
+\label{fig:pi0}
+\end{figure}
+
+\subsection{The main models}
+Table~\ref{tab:vla} lists the models you will see cited everywhere. You do not need to know all the details. Read OpenVLA (the clearest open baseline) and $\pi_0$ (the current standard architecture) first.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}p{2.4cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+Model & Year, lab & Architecture & What it showed \\
+\midrule
+RT-1 & 2022, Google & image transformer, actions in 256 bins & a single policy trained on about 130\,000 real episodes can do hundreds of tasks \\
+RT-2 & 2023, Google DeepMind & large VLM, actions written as text tokens & web knowledge transfers to robot control (``the first VLA'') \\
+Octo & 2024, Berkeley et al. & small open transformer (27M--93M) with a diffusion head & open generalist policy on Open X-Embodiment, easy to fine-tune \\
+OpenVLA & 2024, Stanford/Berkeley & 7B: Llama~2 with DINOv2 and SigLIP encoders, action tokens & open 7B model that beat the much larger closed RT-2-X \\
+$\pi_0$ & 2024, Physical Intelligence & PaliGemma 3B VLM + flow-matching action expert, chunks of 50 & dexterous tasks such as laundry folding; set the standard architecture \\
+$\pi_{0.5}$ & 2025, Physical Intelligence & $\pi_0$ plus high-level subtask prediction, co-trained on varied data & works in homes it has never seen \\
+GR00T N1 & 2025, NVIDIA & ``System 2'' VLM + ``System 1'' diffusion transformer & open humanoid foundation model with a dual-system design \\
+Helix & 2025, Figure & 7B VLM at 7--9~Hz + 80M policy at 200~Hz & dual-system control of a full humanoid upper body \\
+Gemini Robotics & 2025, Google DeepMind & built on Gemini; 1.5 version ``thinks'' before acting & strong generalisation; reasoning in language before motion \\
+\bottomrule
+\end{tabularx}
+\caption{Influential VLAs. Parameter counts and rates are as reported by the authors. Helix and Gemini Robotics are described in company reports, not full papers.}
+\label{tab:vla}
+\end{table}
+
+\begin{paperbox}{Kim et al.\ (2024), ``OpenVLA: An Open-Source Vision-Language-Action Model''}
+A 7B-parameter VLA built on Llama~2, with two image encoders (DINOv2 for geometry and SigLIP for semantics). Trained on about 970\,000 trajectories from Open X-Embodiment. Actions are 7 tokens from 256 bins. It outperformed RT-2-X (55B) on a broad evaluation and can be fine-tuned with LoRA on a single GPU. It is the base model of ECoT (Section~\ref{sec:rvla}) and of many follow-ups. Weakness: about 5--6 actions per second on a good GPU, too slow for dynamic tasks.
+\end{paperbox}
+
+\begin{paperbox}{Black et al.\ (2024), ``$\pi_0$: A Vision-Language-Action Flow Model for General Robot Control''}
+Takes the PaliGemma VLM and adds an action expert trained with flow matching. Produces chunks of 50 continuous actions, at up to 50~Hz control. Pre-trained on a large mix of the company's own data across several robot types plus Open X-Embodiment, then fine-tuned for hard tasks such as folding laundry and assembling boxes. The successor $\pi_{0.5}$ adds a step that first predicts the next subtask in words, which makes it a simple reasoning VLA.
+\end{paperbox}
+
+\subsection{Fast and slow: dual-system designs}
+\label{sec:dual}
+A large VLM cannot run at the rates a robot needs. The answer borrowed from psychology is a \textbf{dual system}: a slow ``System 2'' that understands and decides, and a fast ``System 1'' that executes. They run asynchronously, and the fast one always uses the latest output of the slow one (Figure~\ref{fig:rates}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.9cm,y=0.75cm,every node/.style={font=\scriptsize}]
+\foreach \y/\n/\r/\c in {3/{reasoning / VLM}/5/cD, 2/{action expert, chunks}/1.25/cB, 1/{position controller}/0.2/cC, 0/{Betaflight attitude loop}/0.05/cA}{
+  \node[anchor=east,font=\small] at (-0.2,\y) {\n};
+  \draw[gridc] (0,\y)--(10,\y);
+  \pgfmathsetmacro{\stp}{\r}
+  \foreach \t in {0,\stp,...,10} \fill[\c] (\t,\y) circle (1.6pt);
+}
+\draw[arr] (0,-0.7)--(10.3,-0.7) node[right]{time};
+\foreach \t in {0,2.5,5,7.5,10} \node[below] at (\t,-0.7) {\pgfmathparse{\t/5}\pgfmathprintnumber[fixed,precision=1]{\pgfmathresult}\,s};
+\node[anchor=west] at (10.4,3) {$\sim$1~Hz};
+\node[anchor=west] at (10.4,2) {$\sim$4~Hz};
+\node[anchor=west] at (10.4,1) {$\sim$25~Hz};
+\node[anchor=west] at (10.4,0) {kHz (100~Hz drawn)};
+\end{tikzpicture}
+\caption{Four control rates over two seconds of flight. A drone's attitude loop runs in the kilohertz range; a reasoning model runs about once per second. Each layer only needs to be as fast as the things it decides about.}
+\label{fig:rates}
+\end{figure}
+
+\begin{bridgebox}
+Your whoop already has this structure. Betaflight's attitude loop is System 1 at kilohertz rates; your Santana-style position controller sits above it. A VLA would add a slow layer on top. You do not replace control with learning; you put learning on top of control.
+\end{bridgebox}
+
+\subsection{What VLAs are good and bad at}
+\textbf{Good at:} understanding open-ended instructions, recognising objects never seen in the robot data, coping with clutter, and producing smooth motions from demonstrations.
+
+\textbf{Bad at:}
+\begin{itemize}
+\item \emph{Speed:} billions of parameters mean tens to hundreds of milliseconds per call.
+\item \emph{Physics:} they map pictures to actions without an explicit model of what will happen, so they cannot check a plan before acting.
+\item \emph{Long tasks:} errors accumulate (covariate shift again), and nothing tells the model that it has fallen off track.
+\item \emph{Safety:} there is no guarantee; a confident wrong action looks the same as a correct one.
+\item \emph{New robot bodies:} skills learned on arms transfer poorly to drones, because the dynamics are different. AirVLA (Section~\ref{sec:drones}) measured exactly this.
+\end{itemize}
+The next two chapters are answers to the long-task and physics problems: reasoning, and world models.
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item How many network passes does a token-based VLA need for one 7-D action, and how many does a flow-matching VLA need for a 50-step chunk with 10 flow steps?
+\item Why does the action expert in $\pi_0$ attend to the VLM rather than the other way round?
+\item Name the layers of your whoop's control stack and their approximate rates.
+\end{enumerate}
+\emph{Answers: 1) seven (one per token), versus one VLM pass plus ten action-expert passes for 50 actions; 2) the VLM provides the understanding, and the actions must be conditioned on it, while the VLM does not need to know the noisy actions; 3) Betaflight attitude/rate loop (kHz), your position controller (tens of Hz), the ground-station planner (slower).}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Reasoning VLAs: thinking before acting}
+\label{sec:rvla}
+
+\subsection{Why make a robot think?}
+A plain VLA maps ``what I see'' to ``what I do'' in one jump. That works for short tasks such as ``pick up the cube''. It struggles with ``tidy the table, but put the fragile things in the box first'', or with a scene it has never seen, because there is no step where the model works out \emph{what} to do before deciding \emph{how}. A reasoning VLA adds intermediate outputs between perception and action, just as chain-of-thought adds them between question and answer. Four flavours exist, depending on what the intermediate output looks like (Figure~\ref{fig:flavours}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=3mm, every node/.style={font=\small}]
+\matrix[row sep=3.5mm, column sep=5mm] {
+\node[bx=gray] (o1) {image + task}; & \node[bx=cD, text width=5.4cm] (r1) {\scriptsize PLAN: grasp cube, move to box. SUBTASK: grasp cube. MOVE: left, down. OBJECTS: cube [112,80,140,105]}; & \node[bx=cB] (a1) {actions}; & \node[lbl,text width=2.6cm,anchor=west] {\textbf{1.\ text reasoning}\\ECoT}; \\
+\node[bx=gray] (o2) {image + task}; & \node[bx=cD, text width=5.4cm] (r2) {high-level model chooses the next subtask in words: ``pick up the sponge''}; & \node[bx=cB] (a2) {actions}; & \node[lbl,text width=2.6cm,anchor=west] {\textbf{2.\ hierarchical}\\Hi Robot, $\pi_{0.5}$}; \\
+\node[bx=gray] (o3) {image + task}; & \node[bx=cD, text width=5.4cm] (r3) {generates an image of the subgoal: what the scene should look like in a moment}; & \node[bx=cB] (a3) {actions}; & \node[lbl,text width=2.6cm,anchor=west] {\textbf{3.\ visual reasoning}\\CoT-VLA}; \\
+\node[bx=gray] (o4) {image + task}; & \node[bx=cD, text width=5.4cm] (r4) {a compact latent plan or a coarse action plan, trained with RL or as rough actions}; & \node[bx=cB] (a4) {actions}; & \node[lbl,text width=2.6cm,anchor=west] {\textbf{4.\ latent / action}\\ThinkAct, ACoT-VLA}; \\
+};
+\foreach \i in {1,2,3,4} {\draw[arr] (o\i)--(r\i); \draw[arr] (r\i)--(a\i);}
+\end{tikzpicture}
+\caption{Four flavours of reasoning VLAs, by what the model produces between seeing and acting.}
+\label{fig:flavours}
+\end{figure}
+
+\subsection{Flavour 1: reasoning in text}
+\begin{paperbox}{Zawalski et al.\ (2024), ``Robotic Control via Embodied Chain-of-Thought Reasoning'' (ECoT)}
+Fine-tunes OpenVLA to write a structured reasoning trace before every action: the task, a high-level plan, the current subtask, a primitive movement in words (``move left''), the gripper's pixel position, and the objects in view with bounding boxes. The reasoning labels for the training data were generated automatically with pretrained detectors and a large language model, so no human wrote them. Result: about 28\% higher absolute success than OpenVLA on hard generalisation tasks, without extra robot data. Because the trace is in words, a human can read it and even correct the plan. Cost: hundreds of extra tokens per step make the policy much slower.
+\end{paperbox}
+
+Why does this help? The intermediate steps are \emph{grounded}: the bounding boxes and gripper positions force the model to locate things in the image before it moves. Each step is easier to learn than the whole jump, and steps learned on one task (``find the object'') are reused in others.
+
+\begin{examplebox}
+What an ECoT-style trace could look like for a drone (my illustration, not from a paper):\\[2pt]
+\texttt{TASK: land on the red box.\ \ PLAN: rise above the table; find the red box; fly over it; descend.\ \ SUBTASK: find the red box.\ \ MOVE: rotate left.\ \ OBJECTS: red box [210,140,260,180], table [0,120,320,240].}\\[2pt]
+The fast controller would only receive the last line of motion; the rest is the model's scratchpad.
+\end{examplebox}
+
+\subsection{Flavour 2: a planner that talks to a doer}
+\begin{paperbox}{Shi et al.\ (2025), ``Hi Robot: Open-Ended Instruction Following with Hierarchical VLA Models''}
+Splits the robot into a high-level VLM that reads complex instructions and live user feedback (``that's not trash'') and decides the next step in plain language, and a low-level VLA ($\pi_0$-style) that executes that step. Tested on single-arm, dual-arm and mobile robots for tasks such as clearing tables and making sandwiches. The interface between the two levels is a short sentence, which is easy to inspect.
+\end{paperbox}
+$\pi_{0.5}$ does the same inside a single model: it first predicts a subtask in text, then the actions for it.
+
+\subsection{Flavour 3: reasoning in pictures}
+\begin{paperbox}{Zhao et al.\ (CVPR 2025), ``CoT-VLA: Visual Chain-of-Thought Reasoning for VLA Models''}
+A 7B model that can generate both images and actions. Before acting, it generates a \emph{subgoal image}: what the camera should see a few steps from now. It then generates a short action chunk to reach that image. The authors report 17\% better real-world success and 6\% better simulation results than the previous state of the art. The subgoal image is a small world-model prediction inside the policy, a first link between reasoning and world models.
+\end{paperbox}
+
+\subsection{Flavour 4: reasoning in latents or actions}
+Words and pictures are not the only possible scratchpad. \textbf{ThinkAct} (2025) trains a multimodal LLM with reinforcement learning to produce reasoning plans that are rewarded when they lead to visually confirmed goal completion and consistent trajectories. The plan is then compressed into a latent vector that conditions a separate action model. \textbf{ACoT-VLA} (CVPR 2026) argues that robots should ``think'' directly in the action space: it first produces a coarse action plan and then refines it. Commercial systems also ``think'': Google DeepMind describes Gemini Robotics 1.5 as reasoning in natural language before producing motor commands.
+
+\subsection{Problems that are still open}
+\begin{watchbox}
+\begin{itemize}[leftmargin=*]
+\item \textbf{Latency.} A reasoning trace of a few hundred tokens takes a large fraction of a second. Hierarchical designs hide this by reasoning rarely and acting often.
+\item \textbf{Faithfulness.} The written reasoning does not have to be the true cause of the action. A model can write a sensible plan and then do something else.
+\item \textbf{No physics check.} A plan in words or pictures can be physically impossible (``fly through the gap'' when the gap is too narrow). Nothing in a reasoning VLA tests the plan against dynamics before it is executed.
+\item \textbf{Labels.} Good reasoning labels for robot data are scarce. They are generated by other models (ECoT) or replaced by rewards (ThinkAct).
+\end{itemize}
+\end{watchbox}
+
+The third point is where world models come in. A world model is a learned simulator: it can take a plan, imagine its outcome, and report back before the robot moves. That is the subject of Part IV.
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Name the four flavours of reasoning and one model for each.
+\item Why do bounding boxes in ECoT's trace help the actions?
+\item In what sense is CoT-VLA's subgoal image a world-model prediction?
+\end{enumerate}
+\emph{Answers: 1) text (ECoT), hierarchical (Hi Robot, $\pi_{0.5}$), visual (CoT-VLA), latent/action (ThinkAct, ACoT-VLA); 2) they force the model to locate the relevant objects before moving, which grounds the plan in the image; 3) it predicts the future observation that should result from acting, which is what a world model does.}
+\end{quizbox}

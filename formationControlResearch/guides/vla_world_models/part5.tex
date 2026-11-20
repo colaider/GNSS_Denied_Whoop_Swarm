@@ -1,0 +1,228 @@
+% ============================== PART V ==============================
+\section{Combining VLAs and world models, and what exists for drones}
+\label{sec:combine}
+
+\subsection{The propose--imagine--verify loop}
+Part III ended with a gap: a reasoning VLA can propose plans but cannot check their physics. Part IV ended with the matching strength: a world model can check a proposal over a short horizon but is a poor planner on its own. Put together, they give the loop in Figure~\ref{fig:verify}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=6mm and 9mm, every node/.style={font=\small}]
+\node[bx=gray] (obs) {camera +\\instruction};
+\node[bx=cB, right=of obs, text width=2.6cm] (vla) {reasoning VLA\\proposes $N$ plans\\or subgoals};
+\node[bx=cD, right=of vla, text width=2.6cm] (wm) {world model\\imagines each\\outcome};
+\node[bx=cC, right=of wm, text width=2.3cm] (sc) {score: goal\\reached? safe?};
+\node[bx=gray, below=10mm of sc, text width=2.3cm] (ex) {execute the best\\(first part only)};
+\draw[arr] (obs)--(vla); \draw[arr] (vla)--(wm); \draw[arr] (wm)--(sc); \draw[arr] (sc)--(ex);
+\draw[darr] (sc.north) -- ++(0,0.7) -| node[pos=0.25,above,font=\scriptsize]{all bad: explain why, ask the reasoner to re-plan} (vla.north);
+\draw[arr] (ex.west) -| node[pos=0.25,below,font=\scriptsize]{new observation} (obs.south);
+\end{tikzpicture}
+\caption{Propose, imagine, verify. The reasoning model supplies semantic candidates, the world model checks their physics, and failures are fed back to the reasoner. The dashed feedback arrow is the least explored part.}
+\label{fig:verify}
+\end{figure}
+
+Recent papers implement parts of this loop:
+\begin{itemize}
+\item \textbf{Selecting among proposals:} the ``Planning Limits'' study (Alrasheed et al., 2026) lets a world model choose among 8 VLA candidates (65\% $\to$ 77\% success). \textbf{Pre-VLA} (2026) adds a verifier that rejects poor action chunks before they are executed or imagined.
+\item \textbf{Foresight as guidance:} \textbf{ForeAct} (Zhang et al., 2026) generates imagined future views and subtask descriptions that steer a VLA step by step; the authors report 87.4\% average success on 11 real tasks against 46.5\% for $\pi_0$.
+\item \textbf{Joint models:} CoT-VLA (Section~\ref{sec:rvla}) generates a subgoal image and then actions. In autonomous driving, DriveWorld-VLA and VLA-World (2026) unify world modelling and planning in one latent space and add ``what-if'' reasoning about candidate actions.
+\end{itemize}
+
+\subsection{What exists for drones}
+\label{sec:drones}
+\textbf{VLAs for drones.} RaceVLA and CognitiveDrone (Skoltech, 2025) were early VLA-controlled drones for racing and cognitive tasks. AerialVLA (2026) maps camera images and instructions to continuous flight commands. AutoFly (ICLR 2026) is an end-to-end VLA for navigation in the wild. \textbf{AirVLA} (Tucker et al., 2026, ``$\pi$, But Make It Fly'') took $\pi_0$, trained for fixed arms, to aerial manipulation. Its finding is important for you: the \emph{visual} knowledge transferred, but the \emph{flight dynamics} did not. A physics-aware guidance step at sampling time raised real pick-and-place success from 23\% to 50\%.
+
+\textbf{World models for drones.} Dream to Fly (Romero et al., 2025) and the NTNU follow-up (Zanatta et al., 2026) use Dreamer world models for vision-based flight, without language.
+
+\textbf{World models plus language for drones.} This combination appeared in mid-2026:
+\begin{itemize}
+\item \textbf{ImagineUAV} (Liu et al., 2026): a 1.3B latent video diffusion model imagines future views from the instruction; an action extractor turns them into 6-DoF motion; a kinodynamic planner makes the result collision-free. Evaluated on benchmarks and in real flights.
+\item \textbf{WorldVLN} (Zhao et al., 2026): an autoregressive latent video model predicts short-term world states and converts them to waypoints; reported to transfer zero-shot to a real drone, with indoor and outdoor benchmarks.
+\item \textbf{WorldFly} (Zheng et al., 2026): jointly generates future video and navigation actions with coupled flow matching, for dense urban canyons.
+\end{itemize}
+
+\begin{table}[h]
+\centering\footnotesize
+\begin{tabular}{@{}l c c c c c c@{}}
+\toprule
+ & language & reasoning & world model & real drone & safety & multi-drone\\
+\midrule
+Dream to Fly (2025) & -- & -- & \checkmark & \checkmark & -- & -- \\
+AirVLA (2026) & \checkmark & -- & -- & \checkmark & partly & -- \\
+AerialVLA, AutoFly (2026) & \checkmark & -- & -- & ? & -- & -- \\
+ImagineUAV (2026) & \checkmark & -- & \checkmark & \checkmark & planner & -- \\
+WorldVLN (2026) & \checkmark & -- & \checkmark & \checkmark & -- & -- \\
+WorldFly (2026) & \checkmark & -- & \checkmark & ? & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption{What the closest drone papers combine, as far as their abstracts and summaries say. ``?'' means I could not tell from what I read; ``partly'' and ``planner'' mean a physics-based component, not a formal safety guarantee. Check the full papers before citing this table.}
+\label{tab:drones}
+\end{table}
+
+\begin{opinionbox}
+Three things look open, based on Table~\ref{tab:drones} and the papers above:
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Explicit reasoning checked by a world model, with feedback.} The drone papers use the world model to \emph{generate} motion. None that I found has a reasoner that proposes subgoals in words, a world model that rejects the infeasible ones, and an explanation that goes back to the reasoner (the dashed arrow in Figure~\ref{fig:verify}).
+\item \textbf{A formal safety layer under the learned layers.} Learned models give no guarantees. A control barrier function filter (Ames et al., 2019) between the learned commands and the flight controller would make the system provably keep its distance from obstacles, whatever the learned parts propose.
+\item \textbf{Tiny drones and several drones.} The papers use drones that carry good cameras or a companion computer and fly alone. Indoor micro-drones that see only through a small camera and rely on a ground station, possibly in groups, are not covered.
+\end{enumerate}
+This field moves every month. Search again right before you write the proposal, and be ready for one of these gaps to close.
+\end{opinionbox}
+
+% --------------------------------------------------------------------
+\section{From here to a thesis}
+
+\subsection{A layered architecture}
+Figure~\ref{fig:stack} shows how the pieces of these notes could stack on top of what you have already built. Each layer runs at its own rate and can be tested on its own.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small}]
+\foreach \y/\c/\t/\r/\w in {
+ 5/cD/{reasoning model: task $\to$ subgoals in words, re-plans on failure}/{$\sim$0.5--1 Hz}/{ground-station GPU},
+ 4/cB/{world model: imagines each subgoal, rejects infeasible ones}/{$\sim$5--10 Hz}/{ground-station GPU},
+ 3/cA/{policy or planner: subgoal $\to$ trajectory / velocity commands}/{$\sim$10--50 Hz}/{ground station},
+ 2/cC/{safety filter (control barrier function): minimal correction if unsafe}/{every command}/{ground station},
+ 1/gray/{your position controller + Betaflight attitude loop}/{50 Hz $\dots$ kHz}/{drone},
+ 0/gray/{optional: several drones, formation and collision rules}/{--}/{ground station}}{
+ \node[bx=\c, minimum width=9.4cm, text width=9.2cm, align=left, anchor=west] at (0,\y*1.0) {\t};
+ \node[lbl, anchor=west] at (9.8,\y*1.0) {\r\\\w};
+}
+\draw[arr] (-0.4,5)--(-0.4,1) node[midway,left,font=\scriptsize,align=right]{commands\\flow down};
+\end{tikzpicture}
+\caption{A possible stack. The bottom two layers exist (or existed in your bachelor project); the learned layers sit on top, and the safety filter makes sure they cannot command anything dangerous.}
+\label{fig:stack}
+\end{figure}
+
+\begin{opinionbox}
+A research question that follows from Section~\ref{sec:combine}: \emph{Does verifying a reasoning model's subgoals with a learned world model, and feeding failures back to it, make long multi-step drone tasks more successful and safer than reasoning alone or a world model alone?} It gives clean experiments, with four variants: VLA only, reasoning VLA, world-model planner, and the full loop. It can be tested in simulation first and on small indoor drones at the end. The architecture uses pretrained models (a VLM for reasoning, a DINO-WM- or V-JEPA-style world model), so the work is in connecting, fine-tuning and evaluating them, which fits a master's thesis.
+\end{opinionbox}
+
+\begin{probbox}{how many trials you need to compare two success rates}
+Each trial succeeds or fails, a Bernoulli variable with success probability $p$ and variance $p(1-p)$. The measured success rate $\hat p$ over $n$ independent trials is a mean of $n$ such variables, so $\E[\hat p]=p$ and $\mathrm{Var}(\hat p)=p(1-p)/n$. Its \textbf{standard error} is $\sqrt{p(1-p)/n}$. By the central limit theorem, $\hat p$ is roughly Gaussian for large $n$, so about 95\% of the time it lies within $1.96$ standard errors of $p$.
+
+\textbf{Difference of two variants} measured on separate trials: variances add, so
+\[
+\mathrm{SE}(\hat p_2-\hat p_1)=\sqrt{\frac{p_1(1-p_1)}{n_1}+\frac{p_2(1-p_2)}{n_2}} .
+\]
+\textbf{Example.} 65\% versus 77\%, as in the Planning Limits paper, with $n=100$ trials each: $\mathrm{SE}=\sqrt{(0.2275+0.1771)/100}=0.064$, and the difference $0.12$ is $1.89$ standard errors, just short of the usual $1.96$. For it to pass you need $n\ge0.4046\,(1.96/0.12)^2\approx108$ trials per variant. With 20 trials per variant (common in real-robot papers) the standard error is about $0.14$, larger than the effect. Plan your drone experiments with this in mind: run many trials in simulation, and use the real flights to show that the result transfers.
+\end{probbox}
+
+\subsection{Skills, in the order you need them}
+\begin{enumerate}
+\item \textbf{PyTorch basics.} Write an MLP with autograd and train it on a toy problem. Re-derive Figure~\ref{fig:backprop} with \texttt{loss.backward()}.
+\item \textbf{A transformer from scratch.} Andrej Karpathy's ``nanoGPT'' and his video ``Let's build GPT'' are the standard route. After that, Section~\ref{sec:transformer} will feel obvious.
+\item \textbf{Behaviour cloning and diffusion policies.} Train a small diffusion or flow-matching policy on a simulated task; reproduce Figure~\ref{fig:bimodal} with it.
+\item \textbf{Fine-tune an open VLA.} OpenVLA or $\pi_0$ (Physical Intelligence's open-source \texttt{openpi}) with LoRA on a simulated benchmark such as LIBERO.
+\item \textbf{A world model.} Train DINO-WM or a small Dreamer on a simple environment, then plan with your own CEM (Figure~\ref{fig:cem}).
+\item \textbf{A drone simulator.} For example a PyBullet-based quadrotor gym or NVIDIA Isaac Lab, with your controller in the loop.
+\item \textbf{Safety filters.} Control barrier functions as a quadratic program; the 2019 tutorial by Ames et al.\ is in your Relevant Papers folder.
+\end{enumerate}
+
+\subsection{Reading list}
+\textbf{Core (read in this order):}
+\begin{enumerate}
+\item Vaswani et al.\ (2017), \emph{Attention Is All You Need}: the transformer.
+\item Dosovitskiy et al.\ (2021), \emph{ViT}; and skim Radford et al.\ (2021), \emph{CLIP}.
+\item Chi et al.\ (2023), \emph{Diffusion Policy}: why generative policies.
+\item Kim et al.\ (2024), \emph{OpenVLA}: the clearest open VLA.
+\item Black et al.\ (2024), \emph{$\pi_0$}: the standard architecture today.
+\item Zawalski et al.\ (2024), \emph{ECoT}: reasoning in a VLA.
+\item Shi et al.\ (2025), \emph{Hi Robot}: hierarchical reasoning.
+\item Hafner et al.\ (2023), \emph{DreamerV3}: latent world models and imagination training.
+\item Zhou et al.\ (2025), \emph{DINO-WM}, and Assran et al.\ (2025), \emph{V-JEPA 2}: planning with pretrained features.
+\item Alrasheed et al.\ (2026), \emph{The Planning Limits of Latent World Models}: when it helps.
+\item Romero et al.\ (2025), \emph{Dream to Fly}; then ImagineUAV and WorldVLN (2026): the drone state of the art.
+\end{enumerate}
+\textbf{Surveys to keep at hand:} the VLA survey by Ma et al.\ (arXiv 2405.14093) and the 2025 review ``VLA Models for Robotics: A Review Towards Real-World Applications'' (arXiv 2510.07077); for world models, ``Understanding World or Predicting Future?'' (arXiv 2411.14499).
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item For each layer of Figure~\ref{fig:stack}, which section of these notes explains it?
+\item What would a fair baseline be for the full propose--imagine--verify loop?
+\end{enumerate}
+\emph{Answers: 1) reasoning: \S9; world model: \S10--13; policy/planner: \S7--8 and \S12; safety filter: outside these notes (Ames et al.); controller: your own work; 2) the same system with each component removed in turn, run on the same tasks and the same simulator with the same compute budget.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section*{Sources}
+\addcontentsline{toc}{section}{Sources}
+\small
+Papers are grouped by part. arXiv numbers are given where I am sure of them. The 2026 papers were checked against their arXiv abstracts or summaries, not read in full.
+
+\textbf{Deep-learning background.}
+Kingma \& Ba, Adam, arXiv 1412.6980.
+He et al., ResNet, arXiv 1512.03385.
+Vaswani et al., Attention Is All You Need, arXiv 1706.03762.
+Dosovitskiy et al., ViT, arXiv 2010.11929.
+Radford et al., CLIP, arXiv 2103.00020.
+Zhai et al., SigLIP, arXiv 2303.15343.
+Oquab et al., DINOv2, arXiv 2304.07193.
+Liu et al., LLaVA, arXiv 2304.08485.
+Hu et al., LoRA, arXiv 2106.09685.
+Wei et al., Chain-of-Thought Prompting, arXiv 2201.11903.
+Ouyang et al., InstructGPT/RLHF, arXiv 2203.02155.
+DeepSeek-AI, DeepSeek-R1, arXiv 2501.12948.
+Ho et al., DDPM, arXiv 2006.11239.
+Lipman et al., Flow Matching, arXiv 2210.02747.
+
+\textbf{Robot learning.}
+Schulman et al., PPO, arXiv 1707.06347.
+Ross \& Bagnell, Efficient Reductions for Imitation Learning, AISTATS 2010.
+Ross, Gordon \& Bagnell, DAgger, arXiv 1011.0686.
+Zhao et al., ACT/ALOHA, arXiv 2304.13705.
+Chi et al., Diffusion Policy, arXiv 2303.04137.
+Open X-Embodiment Collaboration, arXiv 2310.08864.
+Khazatsky et al., DROID, arXiv 2403.12945.
+Kaufmann et al., Champion-level drone racing using deep RL, Nature 620 (2023).
+Ames et al., Control Barrier Functions: Theory and Applications, arXiv 1903.11199.
+
+\textbf{VLAs and reasoning VLAs.}
+Brohan et al., RT-1, arXiv 2212.06817.
+Brohan et al., RT-2, arXiv 2307.15818.
+Octo Model Team, Octo, arXiv 2405.12213.
+Kim et al., OpenVLA, arXiv 2406.09246.
+Black et al., $\pi_0$, arXiv 2410.24164.
+Physical Intelligence, $\pi_{0.5}$, arXiv 2504.16054.
+Pertsch et al., FAST, arXiv 2501.09747.
+NVIDIA, GR00T N1, arXiv 2503.14734.
+Figure AI, Helix (company report, 2025).
+Google DeepMind, Gemini Robotics and Gemini Robotics 1.5 (technical reports, 2025).
+Zawalski et al., ECoT, arXiv 2407.08693.
+Shi et al., Hi Robot, arXiv 2502.19417.
+Zhao et al., CoT-VLA, arXiv 2503.22020 (CVPR 2025).
+Huang et al., ThinkAct, arXiv 2507.16815.
+Zhong et al., ACoT-VLA, arXiv 2601.11404 (CVPR 2026).
+Ma et al., A Survey on VLA Models for Embodied AI, arXiv 2405.14093.
+VLA Models for Robotics: A Review Towards Real-World Applications, arXiv 2510.07077.
+
+\textbf{World models.}
+Ha \& Schmidhuber, World Models, arXiv 1803.10122.
+Hafner et al., PlaNet, arXiv 1811.04551.
+Hafner et al., Dreamer, arXiv 1912.01603.
+Hafner et al., DreamerV3, arXiv 2301.04104 (Nature, 2025).
+Schrittwieser et al., MuZero, arXiv 1911.08265.
+Hansen et al., TD-MPC2, arXiv 2310.16828.
+LeCun, A Path Towards Autonomous Machine Intelligence (JEPA position paper), OpenReview 2022.
+Assran et al., V-JEPA 2, arXiv 2506.09985.
+Zhou, Pan, LeCun \& Pinto, DINO-WM, arXiv 2411.04983 (ICML 2025).
+Bruce et al., Genie, arXiv 2402.15391.
+Yang et al., UniSim, arXiv 2310.06114.
+NVIDIA, Cosmos World Foundation Model Platform, arXiv 2501.03575.
+Google DeepMind, Genie 3 (announcement, August 2025).
+Understanding World or Predicting Future? A Comprehensive Survey of World Models, arXiv 2411.14499.
+Alrasheed, Azam \& Akhtar, The Planning Limits of Latent World Models, arXiv 2609.39235.
+
+\textbf{Combining VLAs, world models and drones.}
+Zhang et al., ForeAct, arXiv 2602.12322.
+Pre-VLA, arXiv 2605.22446.
+DriveWorld-VLA, arXiv 2602.06521; VLA-World, arXiv 2604.09059.
+Romero et al., Dream to Fly, arXiv 2501.14377.
+Zanatta, Malczyk \& Alexis, Generalization of World Models under Environmental Variability, arXiv 2606.05015.
+Serpiva et al., RaceVLA (2025); Lykov et al., CognitiveDrone (2025).
+AerialVLA, arXiv 2603.14363.
+AutoFly, arXiv 2602.09657 (ICLR 2026).
+Tucker et al., $\pi$, But Make It Fly (AirVLA), arXiv 2603.25038.
+Liu et al., ImagineUAV, arXiv 2606.01205.
+Zhao et al., WorldVLN, arXiv 2605.15964.
+Zheng et al., WorldFly, arXiv 2606.06147.

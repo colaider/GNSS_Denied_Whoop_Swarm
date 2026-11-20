@@ -1,0 +1,544 @@
+% ============================== PART I ==============================
+\section{From logistic regression to neural networks}
+
+\subsection{A neuron is a logistic regression}
+In the course you met logistic regression: take an input vector $\x$, compute a score $z=\w^\top\x+b$, and squash it with the sigmoid $\sigma(z)=1/(1+e^{-z})$ to get a probability. That \emph{is} one artificial neuron. A neural network is many of these, stacked so that the outputs of one layer are the inputs of the next:
+\begin{equation}
+\h_1=\phi(W_1\x+\vect{b}_1),\qquad \h_2=\phi(W_2\h_1+\vect{b}_2),\qquad \dots,\qquad \hat{\y}=W_L\h_{L-1}+\vect{b}_L .
+\label{eq:mlp}
+\end{equation}
+$\phi$ is a non-linear activation, today almost always ReLU, $\max(0,z)$, or its smooth cousin GELU. Without $\phi$ the whole stack would collapse into one linear map $W_L\cdots W_1\x$, which is just linear regression again. The non-linearity is what lets the network bend its decision boundary.
+
+\begin{probbox}{random variables, Bernoulli, and why the sigmoid gives a probability}
+\textbf{Random variable.} A quantity whose value is uncertain, written with a capital letter, $Y$. Its \emph{distribution} says how likely each value is. A binary label $Y\in\{0,1\}$ (``cat or not'') has the \textbf{Bernoulli} distribution with one parameter $p=P(Y=1)$:
+\[
+P(Y=y)=p^{\,y}(1-p)^{1-y}\qquad(y=1\text{ gives }p,\quad y=0\text{ gives }1-p).
+\]
+\textbf{Conditional probability.} $P(A\mid B)=P(A\cap B)/P(B)$ is the probability of $A$ once we know that $B$ happened. A classifier models $P(Y=1\mid\x)$: the probability of the label \emph{given} the input.
+
+\textbf{Odds and log-odds.} The odds are $p/(1-p)$: $p=0.8$ gives odds $4$ (``4 to 1''). The log-odds $\log\frac{p}{1-p}$ can be any real number, from $-\infty$ ($p\to0$) to $+\infty$ ($p\to1$), so it is a natural thing for a linear model to predict.
+
+\textbf{Derivation of the sigmoid.} Logistic regression \emph{assumes} that the log-odds is linear in $\x$, $\log\frac{p}{1-p}=z=\w^\top\x+b$. Solve for $p$:
+\[
+\frac{p}{1-p}=e^{z}\ \Rightarrow\ p=e^{z}-p\,e^{z}\ \Rightarrow\ p\,(1+e^{z})=e^{z}\ \Rightarrow\ p=\frac{e^{z}}{1+e^{z}}=\frac{1}{1+e^{-z}}=\sigma(z).
+\]
+So the sigmoid is not an arbitrary squashing function: it is the inverse of the log-odds. Example: $z=\log 4\approx1.386$ gives $\sigma(z)=0.8$.
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=1.15cm,y=0.75cm, every node/.style={font=\small}]
+\foreach \i in {1,2,3} \node[circle,draw=inkm,fill=cA!12,minimum size=6mm] (x\i) at (0,-\i) {$x_\i$};
+\foreach \i in {1,...,4} \node[circle,draw=inkm,fill=cC!14,minimum size=6mm] (a\i) at (1.6,0.5-\i) {};
+\foreach \i in {1,...,4} \node[circle,draw=inkm,fill=cC!14,minimum size=6mm] (b\i) at (3.2,0.5-\i) {};
+\foreach \i in {1,2} \node[circle,draw=inkm,fill=cB!16,minimum size=6mm] (y\i) at (4.8,-0.5-\i) {$\hat y_\i$};
+\foreach \i in {1,2,3} \foreach \j in {1,...,4} \draw[inkm!40] (x\i)--(a\j);
+\foreach \i in {1,...,4} \foreach \j in {1,...,4} \draw[inkm!40] (a\i)--(b\j);
+\foreach \i in {1,...,4} \foreach \j in {1,2} \draw[inkm!40] (b\i)--(y\j);
+\node[lbl] at (0,-4.1) {input $\x$};
+\node[lbl] at (1.6,-4.1) {hidden $\h_1$};
+\node[lbl] at (3.2,-4.1) {hidden $\h_2$};
+\node[lbl] at (4.8,-4.1) {output};
+\begin{scope}[shift={(7.9,-2)}]
+\node[circle,draw=inkm,fill=cC!14,minimum size=9mm] (n) at (0,0) {$\sigma$};
+\foreach \i/\yy in {1/1.1,2/0,3/-1.1} {\node[font=\small] (xi\i) at (-1.6,\yy) {$x_\i$}; \draw[arr] (xi\i)--(n) node[midway,above,font=\scriptsize]{$w_\i$};}
+\draw[arr] (n)--(1.4,0) node[right,font=\small]{$p$};
+\node[lbl] at (0,-1.6) {one neuron $=$\\logistic regression};
+\end{scope}
+\end{tikzpicture}
+\caption{A multilayer perceptron (MLP) with two hidden layers (left). Every circle in the middle computes what the single neuron on the right computes: a weighted sum followed by a non-linearity.}
+\label{fig:mlp}
+\end{figure}
+
+\begin{bridgebox}
+Course book, logistic regression and the MLP section of the CNN chapter. A CNN is an MLP whose first layers share weights across image positions. Everything below about training applies to both.
+\end{bridgebox}
+
+\subsection{The loss is a negative log-likelihood}
+Every loss you will see in these notes comes from one recipe: \emph{make the observed data as probable as possible under the model}. Write the model as a probability distribution $p_\theta(y\mid\x)$ with parameters $\theta$ and minimise
+\begin{equation}
+\mathcal L(\theta) = -\frac1N\sum_{n=1}^N \log p_\theta(y_n\mid \x_n).\label{eq:nll}
+\end{equation}
+\begin{itemize}
+\item If the model says $y$ is Gaussian around $\hat y$ with fixed variance, $-\log p$ is $(y-\hat y)^2$ up to constants: the \textbf{mean squared error} from regression.
+\item If $y$ is one of $K$ classes and the model outputs probabilities $p_1,\dots,p_K$, $-\log p$ is $-\log p_{y}$: the \textbf{cross-entropy} from classification.
+\end{itemize}
+
+\begin{probbox}{likelihood, independence, and where MSE and cross-entropy come from}
+\textbf{Independence.} Two events are independent if knowing one does not change the other: $P(A\cap B)=P(A)P(B)$. We assume the training examples are \emph{independent and identically distributed} (i.i.d.): drawn separately from the same distribution. Then the probability of the whole dataset is a product:
+\[
+P(y_1,\dots,y_N\mid\x_1,\dots,\x_N)=\prod_{n=1}^N p_\theta(y_n\mid\x_n)\ =:\ \mathcal{L}ik(\theta).
+\]
+Read as a function of the parameters $\theta$, this product is the \textbf{likelihood}. \textbf{Maximum likelihood} picks the $\theta$ that makes the observed data most probable.
+
+\textbf{Why the log.} $\log$ is increasing, so maximising $\log\mathcal Lik$ gives the same $\theta$. It turns the product into a sum, $\log\prod_n p_n=\sum_n\log p_n$, which is easy to differentiate, and it avoids numerical underflow (a product of a million numbers below 1 is 0 in floating point). Negating and dividing by $N$ gives equation~\eqref{eq:nll}: minimise the average negative log-likelihood.
+
+\textbf{Densities.} For a continuous $y$, $p(y)$ is a \emph{density}: probabilities are areas under it, $P(a\le Y\le b)=\int_a^b p(y)\,\mathrm dy$, and $p(y)$ itself may exceed 1.
+
+\textbf{Derivation 1: Gaussian $\Rightarrow$ MSE.} The Gaussian (normal) density with mean $\hat y$ and variance $\sigma^2$ is
+\[
+\mathcal N(y;\hat y,\sigma^2)=\frac{1}{\sqrt{2\pi\sigma^2}}\exp\!\Big(-\frac{(y-\hat y)^2}{2\sigma^2}\Big),
+\qquad
+-\log\mathcal N=\frac{(y-\hat y)^2}{2\sigma^2}+\tfrac12\log(2\pi\sigma^2).
+\]
+With $\sigma$ fixed, the second term is a constant and the first is the squared error times $1/(2\sigma^2)$. Same minimiser as MSE.
+
+\textbf{Derivation 2: Bernoulli $\Rightarrow$ binary cross-entropy.} $-\log\big[p^{\,y}(1-p)^{1-y}\big]=-y\log p-(1-y)\log(1-p)$.
+
+\textbf{Derivation 3: categorical $\Rightarrow$ cross-entropy.} With $K$ classes, $P(Y=k)=p_k$. Writing the label as a one-hot vector $\vect t$, $-\log p_y=-\sum_k t_k\log p_k$, because only the true class has $t_k=1$.
+\end{probbox}
+This matters later. A language model is a classifier over a vocabulary of about $10^5$ tokens, trained with cross-entropy. A VLA that writes actions as tokens is the same classifier. A diffusion policy is trained with a squared error that comes from a Gaussian.
+
+\subsection{Backpropagation is the chain rule, done in the right order}
+Gradient descent needs $\partial\mathcal L/\partial\theta$ for millions of parameters. Backpropagation computes all of them in one backward sweep, at about the cost of one forward pass. Draw the computation as a graph, go forward once and store every intermediate value, then go backward and multiply local derivatives.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small}]
+\node[bx=gray] (x) at (0,1.1) {$x=2$};
+\node[bx=gray] (w) at (0,0) {$w=0.5$};
+\node[bx=gray] (b) at (0,-1.1) {$b=1$};
+\node[bx] (z) at (3.2,0) {$z=wx+b$\\$=2$};
+\node[bx] (a) at (6.6,0) {$a=\mathrm{ReLU}(z)$\\$=2$};
+\node[bx=cB] (L) at (10.2,0) {$\mathcal L=(a-y)^2$\\$y=3,\ \mathcal L=1$};
+\draw[arr] (x)--(z); \draw[arr] (w)--(z); \draw[arr] (b)--(z); \draw[arr] (z)--(a); \draw[arr] (a)--(L);
+\draw[darr] (L.south) to[bend left=30] (a.south);
+\draw[darr] (a.south) to[bend left=30] (z.south);
+\draw[darr] (z.south west) to[bend left=20] (b.east);
+\node[font=\scriptsize,color=cB,align=center] at (9.0,-1.25) {$\partial\mathcal L/\partial a=2(a-y)=-2$};
+\node[font=\scriptsize,color=cB,align=center] at (4.6,-1.6) {$\partial\mathcal L/\partial z=-2\cdot\mathrm{ReLU}'(2)=-2$};
+\node[font=\scriptsize,color=cB,anchor=east,align=right] at (-0.8,0) {$\partial\mathcal L/\partial w=-2\cdot x=-4$};
+\node[font=\scriptsize,color=cB,anchor=east,align=right] at (-0.6,-1.1) {$\partial\mathcal L/\partial b=-2\cdot1=-2$};
+\end{tikzpicture}
+\caption{Backpropagation on a one-neuron network. Black: the forward pass, which stores every value. Orange dashed: the backward pass, which multiplies local derivatives from the loss back to each parameter.}
+\label{fig:backprop}
+\end{figure}
+
+\begin{examplebox}
+In Figure~\ref{fig:backprop} the prediction is $a=2$ but the target is $y=3$, so the loss is $1$. Both gradients are negative, so gradient descent \emph{increases} $w$ and $b$. With step size $\eta=0.1$: $w\leftarrow 0.5+0.4=0.9$ and $b\leftarrow 1+0.2=1.2$. The new prediction is $0.9\cdot2+1.2=3.0$, exactly the target. (A lucky step. Usually it only gets closer.)
+\end{examplebox}
+
+Libraries such as PyTorch and JAX build this graph automatically (\emph{autograd}). You write the forward pass; they give you the gradients.
+
+\subsection{Optimisers and the tricks that make deep nets train}
+Plain gradient descent from the course becomes, in practice:
+\begin{itemize}
+\item \textbf{Mini-batch SGD:} estimate the gradient from a random batch of 32--4096 examples instead of the whole dataset (the course's stochastic gradient descent).
+\item \textbf{Adam} (Kingma \& Ba, 2015): keep a running mean $m$ of the gradients and a running mean $v$ of their squares, and step by $\eta\, m/(\sqrt v+\epsilon)$. Every parameter gets its own step size. Adam (or its variant AdamW, with weight decay) trains almost every model in these notes.
+\item \textbf{Residual connections} (He et al., 2016): compute $\h_{l+1}=\h_l+f(\h_l)$ instead of $\h_{l+1}=f(\h_l)$. The gradient then has a direct path back through the ``$+$'', so networks with a hundred layers still train. Every transformer uses them.
+\item \textbf{Normalisation layers} (batch norm, layer norm): rescale activations to mean $0$ and variance $1$ so that they stay in a good range for the next layer.
+\item \textbf{Regularisation:} weight decay is the L2 penalty from the course; dropout randomly switches off units during training.
+\end{itemize}
+
+\begin{probbox}{expectation, the law of large numbers, and why mini-batches work}
+\textbf{Expectation.} The expected value is the probability-weighted average: $\E[f(X)]=\sum_x P(x)f(x)$ for discrete $X$, or $\int p(x)f(x)\,\mathrm dx$ for continuous $X$. It is \emph{linear}: $\E[aX+bY]=a\E[X]+b\E[Y]$, always, even if $X$ and $Y$ are dependent. The \textbf{variance} $\mathrm{Var}(X)=\E[(X-\E X)^2]=\E[X^2]-(\E X)^2$ measures spread; $\mathrm{Var}(cX)=c^2\mathrm{Var}(X)$, and for \emph{independent} $X,Y$, $\mathrm{Var}(X+Y)=\mathrm{Var}(X)+\mathrm{Var}(Y)$.
+
+\textbf{Law of large numbers.} The average of many i.i.d.\ samples approaches the expectation. That is why the training loss $\frac1N\sum_n\ell_n$ is a stand-in for the expected loss on new data.
+
+\textbf{Mini-batch gradients are unbiased.} Let the full gradient be $\vect g=\frac1N\sum_{n=1}^N\nabla\ell_n$. Draw one index $i$ uniformly at random. Then
+\[
+\E[\nabla\ell_i]=\sum_{n=1}^N\tfrac1N\nabla\ell_n=\vect g .
+\]
+A batch of $B$ such draws averages $B$ unbiased estimates, so it is unbiased too, and (by the variance rules above) its variance is $\mathrm{Var}(\nabla\ell_i)/B$. Bigger batches give less noisy steps, but the noise falls only like $1/\sqrt B$ in standard deviation: 4 times the batch for half the noise.
+\end{probbox}
+
+\begin{watchbox}
+The bias--variance story from the course still holds, but with a twist: very large networks trained on very large data often keep improving as they grow, instead of overfitting. This is why ``bigger model, more data'' has dominated since about 2020. It does not hold when the data is small. Most robot datasets \emph{are} small, which is one reason robotics borrows models pretrained on internet data.
+\end{watchbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Why does a network without activation functions reduce to linear regression?
+\item Which loss do you get from the negative log-likelihood if the model outputs a Laplace distribution, $p(y)\propto e^{-|y-\hat y|}$?
+\item In Figure~\ref{fig:backprop}, what are the gradients if $x=-1$ (so $z=0.5$)?
+\end{enumerate}
+\emph{Answers: 1) a product of matrices is a matrix; 2) the absolute error $|y-\hat y|$; 3) $a=0.5$, $\partial\mathcal L/\partial a=-5$, $\partial\mathcal L/\partial w=+5$, $\partial\mathcal L/\partial b=-5$.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Embeddings and latent spaces}
+
+\subsection{Turning symbols into vectors}
+A network can only multiply numbers. Words, image patches and robot actions must become vectors first. The naive way is one-hot encoding: word number $i$ out of $V$ becomes a vector of length $V$ with a single 1. That is huge and says nothing about meaning. Instead, every model in these notes uses an \textbf{embedding table}: a learned matrix $E\in\R^{V\times d}$, and token $i$ becomes row $E_i$, a dense vector with $d$ between 256 and 8192. The rows are trained by backpropagation like any other weight, and similar tokens end up close together.
+
+\textbf{Tokens.} Text is cut into pieces called tokens by a \emph{tokenizer}. Common words are one token; rare words are split into several (``quadrotor'' might be ``quad'' + ``rotor''). A typical vocabulary has 32\,000 to 256\,000 tokens. VLAs later add special tokens for actions.
+
+\subsection{Latent spaces and autoencoders}
+An \textbf{autoencoder} squeezes an input through a narrow middle layer and is trained to reconstruct it:
+\begin{equation}
+\z=\mathrm{enc}(\x)\in\R^{d_z},\qquad \hat\x=\mathrm{dec}(\z),\qquad \mathcal L=\lVert \x-\hat\x\rVert^2,\qquad d_z\ll \dim\x .
+\end{equation}
+Because $\z$ is small, the encoder must keep only what matters. The space where $\z$ lives is called the \textbf{latent space}. A $64\times64$ camera image has 12\,288 numbers; a good latent might have 32--1024. World models (Part IV) almost never predict pixels directly. They predict the next \emph{latent}, which is far cheaper.
+
+A \textbf{variational autoencoder} (VAE) makes the latent a probability distribution: the encoder outputs a mean and a variance, $\z$ is sampled from it, and an extra KL term in the loss keeps these distributions close to a standard Gaussian. This makes the latent space smooth, so that you can sample new $\z$ and decode them. The first world model (Ha \& Schmidhuber, 2018) used exactly a VAE as its ``eyes''.
+
+\begin{probbox}{KL divergence, the Gaussian KL, and sampling with gradients}
+\textbf{KL divergence} measures how different a distribution $q$ is from a distribution $p$:
+\[
+\mathrm{KL}(q\,\|\,p)=\E_{z\sim q}\Big[\log\frac{q(z)}{p(z)}\Big]=\int q(z)\log\frac{q(z)}{p(z)}\,\mathrm dz .
+\]
+It is $0$ only when $q=p$, otherwise positive, and it is not symmetric ($\mathrm{KL}(q\|p)\ne\mathrm{KL}(p\|q)$). \emph{Why it is never negative:} $\log$ is concave, so Jensen's inequality says $\E[\log X]\le\log\E[X]$. Hence $-\mathrm{KL}=\E_q[\log\tfrac pq]\le\log\E_q[\tfrac pq]=\log\int q\,\tfrac pq=\log\int p=\log1=0$.
+
+\textbf{Derivation: KL between a Gaussian and the standard Gaussian} (what the VAE loss uses). Let $q=\mathcal N(\mu,s^2)$ and $p=\mathcal N(0,1)$. From the density formula,
+\[
+\log q(z)-\log p(z)=-\tfrac12\log s^2-\frac{(z-\mu)^2}{2s^2}+\frac{z^2}{2}.
+\]
+Take the expectation under $q$, using $\E_q[(z-\mu)^2]=s^2$ and $\E_q[z^2]=\mathrm{Var}+\text{mean}^2=s^2+\mu^2$:
+\[
+\mathrm{KL}(q\|p)=-\tfrac12\log s^2-\tfrac12+\tfrac12(s^2+\mu^2)=\tfrac12\big(\mu^2+s^2-1-\log s^2\big).
+\]
+It is zero exactly when $\mu=0$ and $s=1$. For a $d$-dimensional latent with independent coordinates, add the $d$ terms.
+
+\textbf{The reparameterisation trick.} We cannot backpropagate through ``draw a random sample''. Instead write $z=\mu+s\,\epsilon$ with $\epsilon\sim\mathcal N(0,1)$. By linearity, $\E[z]=\mu$ and $\mathrm{Var}(z)=s^2\mathrm{Var}(\epsilon)=s^2$, so $z$ has the right distribution; and now $z$ is a differentiable function of $\mu$ and $s$, with the randomness moved into $\epsilon$. Section~\ref{sec:dreamer} derives the full VAE loss (the ELBO).
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small}]
+\draw[fill=cA!10,draw=inkm] (0,1.2) rectangle (1.2,-1.2); \node[lbl] at (0.6,-1.5) {image $\x$\\12\,288 numbers};
+\draw[fill=cC!14,draw=inkm] (1.6,1.2) -- (3.2,0.4) -- (3.2,-0.4) -- (1.6,-1.2) -- cycle; \node at (2.35,0) {enc};
+\draw[fill=cD!18,draw=inkm] (3.5,0.4) rectangle (3.9,-0.4); \node[lbl] at (3.7,-0.75) {$\z$\\32};
+\draw[fill=cC!14,draw=inkm] (4.2,0.4) -- (5.8,1.2) -- (5.8,-1.2) -- (4.2,-0.4) -- cycle; \node at (5.05,0) {dec};
+\draw[fill=cA!10,draw=inkm] (6.2,1.2) rectangle (7.4,-1.2); \node[lbl] at (6.8,-1.5) {reconstruction $\hat\x$};
+\draw[arr] (1.2,0)--(1.6,0); \draw[arr] (3.2,0)--(3.5,0); \draw[arr] (3.9,0)--(4.2,0); \draw[arr] (5.8,0)--(6.2,0);
+\draw[decorate,decoration={brace,amplitude=5pt}] (7.4,1.45) -- (0,1.45) ;
+\node[lbl] at (3.7,1.9) {trained so that $\hat\x\approx\x$};
+\end{tikzpicture}
+\caption{An autoencoder. The narrow middle forces the network to keep only the information needed to rebuild the image. The space of $\z$ is the latent space.}
+\end{figure}
+
+\subsection{Contrastive learning: matching images and text}
+How do you get an image embedding that ``means'' the same as a sentence? \textbf{CLIP} (Radford et al., 2021) trained an image encoder and a text encoder on 400 million image--caption pairs from the internet. In a batch of $N$ pairs, it computes all $N^2$ similarities $s_{ij}=\langle \z^{\text{img}}_i,\z^{\text{txt}}_j\rangle$ (after normalising the vectors) and treats each row as an $N$-way classification whose correct answer is the diagonal:
+\begin{equation}
+\mathcal L_i=-\log\frac{e^{s_{ii}/\tau}}{\sum_{j=1}^N e^{s_{ij}/\tau}} \qquad\text{(and the same for columns).}
+\end{equation}
+This is the softmax cross-entropy from the course, where the ``classes'' are the other captions in the batch. SigLIP (Zhai et al., 2023) replaces the softmax with independent sigmoids and is the image encoder inside several VLAs. \textbf{DINOv2} (Oquab et al., 2023) learns image features without any text, by making two augmented views of the same image produce similar features. Its features are so good at geometry that DINO-WM (Section~\ref{sec:latentplan}) builds a world model directly on top of them.
+
+\begin{probbox}{the softmax is a categorical distribution, and its gradient}
+\textbf{Definition.} For scores (logits) $s_1,\dots,s_K$, $\ \softmax_k(\vect s)=\dfrac{e^{s_k}}{\sum_j e^{s_j}}$. Every entry is positive and they sum to 1, so the result is a valid \textbf{categorical distribution}: the probability of class $k$.
+
+\textbf{Two classes give the sigmoid.} $\dfrac{e^{s_1}}{e^{s_1}+e^{s_2}}=\dfrac{1}{1+e^{-(s_1-s_2)}}=\sigma(s_1-s_2)$ (divide top and bottom by $e^{s_1}$). Softmax is the multi-class logistic regression.
+
+\textbf{Shift invariance.} Adding the same $c$ to every score multiplies top and bottom by $e^{c}$, which cancels. Libraries subtract $\max_j s_j$ before exponentiating so that $e^{s}$ never overflows.
+
+\textbf{Derivation of the gradient.} The cross-entropy for true class $y$ is $-\log\softmax_y=-s_y+\log\sum_j e^{s_j}$. Differentiate with respect to $s_k$:
+\[
+\frac{\partial}{\partial s_k}\Big(-s_y+\log\sum_j e^{s_j}\Big)=-\mathbb 1[k=y]+\frac{e^{s_k}}{\sum_j e^{s_j}}=p_k-\mathbb 1[k=y].
+\]
+``Predicted probability minus target'': it pushes the true class up and every other class down in proportion to how much probability it wrongly took. This one line is the training signal of CLIP, of every LLM and of every token-based VLA.
+
+\textbf{Temperature.} Dividing the scores by $\tau$ (or $T$) before the softmax: as $\tau\to0$ the largest score takes all the probability (a one-hot vector); as $\tau\to\infty$ all classes become equally likely.
+\end{probbox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.75cm,y=0.75cm,every node/.style={font=\scriptsize}]
+\foreach \i in {0,...,4} \foreach \j in {0,...,4} {
+  \ifnum\i=\j \fill[cA!70] (\j,-\i) rectangle ++(1,-1); \else \fill[cA!8] (\j,-\i) rectangle ++(1,-1); \fi
+  \draw[white,line width=1pt] (\j,-\i) rectangle ++(1,-1);}
+\foreach \t [count=\j from 0] in {cat,drone,cube,shelf,door} \node[rotate=40,anchor=south west] at (\j+0.3,0.05) {``\t''};
+\foreach \t [count=\i from 0] in {cat,drone,cube,shelf,door} \node[anchor=east] at (-0.1,-\i-0.5) {image of a \t};
+\node[lbl,anchor=west] at (5.3,-1.5) {diagonal: matching pairs,\\push similarity up};
+\node[lbl,anchor=west] at (5.3,-3.5) {off-diagonal: wrong pairs,\\push similarity down};
+\end{tikzpicture}
+\caption{Contrastive training in CLIP. Each row is a classification over the captions in the batch, and the correct class is the diagonal.}
+\end{figure}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Why is a 32-number latent more useful for planning than the 12\,288 raw pixels?
+\item In CLIP, what plays the role of the ``class labels'' in the cross-entropy?
+\end{enumerate}
+\emph{Answers: 1) predicting 32 numbers ahead is cheap and focuses on what matters, not on every pixel of texture; 2) the indices of the matching captions within the batch.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Attention and the transformer}
+\label{sec:transformer}
+
+\subsection{The problem: sequences of any length}
+An MLP takes a fixed-size input. A sentence, a video or a robot trajectory is a \emph{sequence} of variable length, and the meaning of one element depends on the others: in ``pick the red cube'', the word ``cube'' needs ``red'' to know which cube. Before 2017 the standard answer was the \textbf{recurrent neural network} (RNN, and its improved form the LSTM): read the sequence one step at a time and carry a hidden state $\h_t=f(\h_{t-1},\x_t)$. RNNs are slow to train because step $t$ waits for step $t-1$, and information from far back fades. They come back in Part IV, because a world model that steps forward in time is naturally recurrent.
+
+\subsection{Attention: a soft dictionary lookup}
+Attention lets every element look directly at every other element. Each token $i$ produces three vectors from its embedding $\x_i$:
+\begin{align*}
+\vect q_i&=W_Q\x_i && \text{query: what am I looking for?}\\
+\vect k_i&=W_K\x_i && \text{key: what do I offer?}\\
+\vect v_i&=W_V\x_i && \text{value: what I pass on.}
+\end{align*}
+Token $i$ scores every token $j$ by how well its query matches their key, turns the scores into weights with a softmax, and takes the weighted average of the values:
+\begin{equation}
+\alpha_{ij}=\softmax_j\!\left(\frac{\vect q_i^\top\vect k_j}{\sqrt{d_k}}\right),\qquad
+\vect o_i=\sum_j\alpha_{ij}\,\vect v_j .
+\label{eq:attn}
+\end{equation}
+In matrix form, with one row per token, this is $\mathrm{Attention}(Q,K,V)=\softmax\!\big(QK^\top/\sqrt{d_k}\big)\,V$.
+The division by $\sqrt{d_k}$ keeps the scores from growing with the vector length; otherwise the softmax saturates and its gradients vanish.
+
+\begin{probbox}{why divide by $\sqrt{d_k}$: the variance of a dot product}
+Assume the components $q_m$ and $k_m$ of a query and a key are independent, with mean 0 and variance 1 (roughly true at initialisation). The score is $\vect q^\top\vect k=\sum_{m=1}^{d_k}q_mk_m$.
+\begin{itemize}[leftmargin=*]
+\item One term: $\E[q_mk_m]=\E[q_m]\E[k_m]=0$ (for independent variables the expectation of a product is the product of expectations), and $\mathrm{Var}(q_mk_m)=\E[q_m^2k_m^2]-0=\E[q_m^2]\E[k_m^2]=1\cdot1=1$.
+\item The sum of $d_k$ independent terms: variances add, so $\mathrm{Var}(\vect q^\top\vect k)=d_k$ and the standard deviation is $\sqrt{d_k}$.
+\item Dividing by $\sqrt{d_k}$: $\mathrm{Var}\big(\vect q^\top\vect k/\sqrt{d_k}\big)=d_k/d_k=1$, whatever the dimension.
+\end{itemize}
+With $d_k=64$ and no scaling, typical scores would be about $\pm8$; $e^{8}\approx3000$ times $e^{0}$, so the softmax would put almost all weight on one token and its gradient (box above: $p_k-\mathbb 1[k=y]$-type terms with $p$ near 0 or 1) would be almost zero.
+\end{probbox}
+
+\begin{examplebox}
+Four tokens with 2-D embeddings: pick $=(1,0)$, the $=(0.2,0.2)$, red $=(0,1)$, cube $=(0.6,0.8)$. Take $W_Q=2I$ and $W_K=1.5I$. The query of ``cube'' is $(1.2,1.6)$ and the keys are $(1.5,0)$, $(0.3,0.3)$, $(0,1.5)$, $(0.9,1.2)$. The dot products divided by $\sqrt2$ are
+\[
+\scda,\quad \scdb,\quad \scdc,\quad \scdd .
+\]
+The softmax turns them into the weights $\attda,\ \attdb,\ \attdc,\ \attdd$. So the output for ``cube'' is mostly its own value plus a large share of ``red'' (\attdc) and very little of ``the'' (\attdb). That is how ``cube'' becomes ``red cube''. Figure~\ref{fig:attn} shows all sixteen weights.
+\end{examplebox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=6.3cm,height=6.3cm,enlargelimits=false,axis lines=box,grid=none,
+  colormap={bl}{color=(white) color=(cA)}, point meta min=0, point meta max=0.65,
+  xtick={0,1,2,3}, xticklabels={pick,the,red,cube}, ytick={0,1,2,3}, yticklabels={pick,the,red,cube},
+  y dir=reverse, xlabel={key token $j$ (looked at)}, ylabel={query token $i$ (looking)},
+  nodes near coords={\pgfmathprintnumber[fixed,precision=2]\pgfplotspointmeta}, every node near coord/.append style={font=\scriptsize,anchor=center,color=black},
+  tick label style={font=\small,color=black}]
+\addplot[matrix plot*, mesh/cols=4, point meta=explicit] table[meta=w]{figs/attn.dat};
+\end{axis}
+\end{tikzpicture}
+\caption{Attention weights $\alpha_{ij}$ for the worked example. Each row sums to 1. Row ``cube'' puts weight on ``red'', which is how context flows between tokens.}
+\label{fig:attn}
+\end{figure}
+
+\textbf{Multi-head attention} runs $h$ attentions in parallel with different $W_Q,W_K,W_V$ (for example one head can track colour words, another spatial words) and concatenates the outputs. \textbf{Self-attention} means queries, keys and values all come from the same sequence. \textbf{Cross-attention} means the queries come from one sequence (say, action tokens) and keys and values from another (say, image tokens). VLAs use both.
+
+\subsection{Position and causality}
+Equation~\eqref{eq:attn} treats the tokens as a set: shuffle them and each output is the same. Order is added by a \textbf{positional encoding}, a vector added to each embedding that depends on its position (sinusoids in the original paper, rotary encodings in most modern models). For generation, a \textbf{causal mask} sets $\alpha_{ij}=0$ for $j>i$, so that a token can only look at the past. This is what lets a model be trained on all positions of a sequence at once and still generate one token at a time.
+
+\subsection{The transformer block}
+A transformer (Vaswani et al., 2017) is a stack of identical blocks. Each block is attention followed by a small MLP, each wrapped in a residual connection and a layer norm (Figure~\ref{fig:block}). The attention mixes information \emph{between} tokens; the MLP processes each token \emph{on its own}. Large models stack 24--100 such blocks.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4.5mm, every node/.style={font=\small}]
+\node[bx=gray, minimum width=3.6cm] (in) {tokens $\x_1,\dots,\x_n$ (+ position)};
+\node[bx, above=of in, minimum width=3.6cm] (ln1) {layer norm};
+\node[bx, above=of ln1, minimum width=3.6cm] (att) {multi-head self-attention};
+\node[circle,draw=inkm,above=of att,inner sep=1pt] (p1) {$+$};
+\node[bx, above=of p1, minimum width=3.6cm] (ln2) {layer norm};
+\node[bx=cC, above=of ln2, minimum width=3.6cm] (mlp) {MLP (per token)};
+\node[circle,draw=inkm,above=of mlp,inner sep=1pt] (p2) {$+$};
+\node[bx=gray, above=of p2, minimum width=3.6cm] (out) {to the next block};
+\draw[arr] (in)--(ln1); \draw[arr] (ln1)--(att); \draw[arr] (att)--(p1); \draw[arr] (p1)--(ln2); \draw[arr] (ln2)--(mlp); \draw[arr] (mlp)--(p2); \draw[arr] (p2)--(out);
+\draw[arr] ($(in.north)+(0,0.12)$) -- ++(-2.4,0) |- (p1.west);
+\draw[arr] ($(p1.north)+(0,0.12)$) -- ++(-2.4,0) |- (p2.west);
+\node[lbl,anchor=east] at ($(p1.west)+(-2.5,-1.1)$) {residual};
+\node[draw=inkm,dashed,rounded corners,fit=(ln1)(p2),inner xsep=30mm,inner ysep=2mm] (blk) {};
+\node[lbl,anchor=west] at (blk.east) {$\times L$ blocks};
+\node[lbl,anchor=west,text width=5.2cm] at ($(att.east)+(0.4,0)$) {mixes information \emph{between} tokens, cost grows as $n^2$};
+\node[lbl,anchor=west,text width=5.2cm] at ($(mlp.east)+(0.4,0)$) {processes each token on its own};
+\end{tikzpicture}
+\caption{One transformer block (the ``pre-norm'' form used today). The residual paths carry the input around each sub-layer.}
+\label{fig:block}
+\end{figure}
+
+\begin{watchbox}
+Attention compares every token with every other token, so its cost grows with $n^2$. A camera image cut into 256 patches, a few frames of history and an instruction quickly give over a thousand tokens. This quadratic cost is one reason why VLAs run at only a few hertz, which matters for drones (Section~\ref{sec:dual}).
+\end{watchbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item In the worked example, which token does ``cube'' attend to least, and why?
+\item What would happen without a positional encoding to ``dog bites man'' and ``man bites dog''?
+\item Why does a causal mask allow training on all positions at once?
+\end{enumerate}
+\emph{Answers: 1) ``the'', its key is short and points nowhere in particular; 2) each token gets exactly the same output in both sentences, so the model cannot tell who bites whom; 3) each position only sees its own past, so predicting token $t+1$ at every position $t$ is a valid training example and all of them are computed in one pass.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Large language models, vision-language models and chain-of-thought}
+
+\subsection{Next-token prediction}
+A large language model (LLM) is a causal transformer trained on one task: given the tokens so far, predict the next one. The last layer outputs a score (logit) for each of the $V$ vocabulary tokens, the softmax turns them into probabilities, and the loss is the cross-entropy against the true next token. It is the course's multi-class classifier, applied trillions of times on internet text.
+
+To generate, the model samples a token, appends it, and repeats. The \textbf{temperature} $T$ divides the logits before the softmax, $p_k\propto e^{\ell_k/T}$. Low $T$ makes the model nearly deterministic; high $T$ makes it more random (Figure~\ref{fig:temp}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[ybar=1pt, bar width=6pt, width=9cm, height=4.6cm, ymin=0, ymax=0.9, xtick={0,1,2,3,4}, enlarge x limits=0.12,
+  xticklabels={``cube'',``box'',``block'',``ball'',``cat''}, ylabel={probability}, legend pos=north east, xlabel={next token after ``pick up the red ...''}]
+\addplot[fill=cA,draw=none] table[x=i,y=ta]{figs/temp.dat}; \addlegendentry{$T=0.5$}
+\addplot[fill=cC,draw=none] table[x=i,y=tb]{figs/temp.dat}; \addlegendentry{$T=1$}
+\addplot[fill=cB,draw=none] table[x=i,y=tc]{figs/temp.dat}; \addlegendentry{$T=2$}
+\end{axis}
+\end{tikzpicture}
+\caption{The same logits $(3,\ 2.2,\ 1,\ 0.3,\ -0.5)$ at three temperatures. At $T=0.5$ ``cube'' gets 82\%; at $T=2$ only 40\%.}
+\label{fig:temp}
+\end{figure}
+
+\begin{probbox}{the chain rule of probability: why next-token prediction models whole texts}
+From the definition of conditional probability, $P(a,b)=P(a)\,P(b\mid a)$. Apply it again and again:
+\[
+p(x_1,x_2,\dots,x_n)=p(x_1)\,p(x_2\mid x_1)\,p(x_3\mid x_1,x_2)\cdots p(x_n\mid x_{<n})=\prod_{t=1}^n p(x_t\mid x_{<t}).
+\]
+This is exact; no assumption is made. Taking logs, $\log p(x_{1:n})=\sum_t\log p(x_t\mid x_{<t})$, so the next-token cross-entropy summed over a sequence \emph{is} the negative log-likelihood of the whole sequence. Generating one token at a time, each sampled from its conditional, produces exact samples of the joint distribution (``ancestral sampling''). The 7 action tokens of RT-2 or OpenVLA are generated the same way: $p(a^{(1)},\dots,a^{(7)})=\prod_i p(a^{(i)}\mid a^{(<i)},\text{obs})$.
+
+\textbf{Check Figure~\ref{fig:temp} by hand.} At $T=1$: $e^{3}=20.09$, $e^{2.2}=9.03$, $e^{1}=2.72$, $e^{0.3}=1.35$, $e^{-0.5}=0.61$, sum $33.80$, so $p(\text{``cube''})=20.09/33.80=0.594$.
+\end{probbox}
+
+\subsection{From a text predictor to an assistant}
+Training happens in stages, and the same stages reappear in robotics:
+\begin{enumerate}
+\item \textbf{Pre-training:} next-token prediction on huge unlabelled data. The model learns language, facts and some reasoning patterns.
+\item \textbf{Supervised fine-tuning (SFT):} continue training on a smaller set of good examples (questions with ideal answers). This is imitation learning (Section~\ref{sec:il}) for text.
+\item \textbf{Reinforcement learning:} let the model generate, score the result, and push up the probability of well-scored outputs. RLHF (Ouyang et al., 2022) uses a learned model of human preferences as the score. Newer reasoning models use \emph{verifiable rewards}, for example whether a maths answer is correct.
+\end{enumerate}
+\textbf{Fine-tuning cheaply.} Updating all billions of weights is expensive. \textbf{LoRA} (Hu et al., 2021) freezes them and learns a small low-rank correction $W+BA$ with $B\in\R^{d\times r}$, $A\in\R^{r\times d}$ and $r\approx 8$--$64$. This is how most people adapt an open VLA to their own robot on one or a few GPUs.
+
+\subsection{Chain-of-thought and reasoning models}
+\textbf{Chain-of-thought} (Wei et al., 2022) is the observation that an LLM answers multi-step questions much better if it first writes out intermediate steps. Each written step becomes part of the input for the next token, so the model gets extra computation and a scratchpad. \textbf{Reasoning models} (OpenAI o1 in 2024, DeepSeek-R1 in 2025) are trained with reinforcement learning to produce long chains of thought before answering; DeepSeek-R1 showed that rewarding only the correctness of the final answer is enough for useful reasoning behaviour to appear.
+
+\begin{plainbox}
+Chain-of-thought trades time for accuracy: more tokens before the answer means more computation spent on the problem. For a chatbot, a few extra seconds are fine. For a robot that must react within tens of milliseconds, they are a real cost. This tension is the central design problem of reasoning VLAs (Section~\ref{sec:rvla}).
+\end{plainbox}
+
+\subsection{Images as tokens: ViT and vision-language models}
+The \textbf{vision transformer} (ViT, Dosovitskiy et al., 2021) cuts an image into patches, typically $16\times16$ pixels, flattens each patch, maps it to an embedding with a linear layer, adds a positional encoding, and feeds the patch tokens to a standard transformer. A $224\times224$ image becomes $14\times14=196$ tokens. Convolutions are no longer needed.
+
+A \textbf{vision-language model} (VLM) connects such an image encoder to an LLM: the image tokens pass through a small projector (often an MLP) into the LLM's embedding space and are placed in front of the text tokens. The LLM then ``reads'' the image as if it were words. Examples are LLaVA (Liu et al., 2023) and PaliGemma (Google, 2024). Most VLAs are a VLM with an action output added (Figure~\ref{fig:vlm}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small}]
+\foreach \i in {0,1,2} \foreach \j in {0,1,2} \draw[fill=cA!\the\numexpr 10+8*\i+5*\j\relax, draw=white, line width=1pt] (\j*0.55,-\i*0.55) rectangle ++(0.55,-0.55);
+\node[lbl] at (0.82,-1.95) {image cut into\\patches};
+\node[bx=cA, anchor=west] (enc) at (2.4,-0.8) {vision encoder\\(ViT, SigLIP, DINOv2)};
+\node[bx=cC, right=0.6cm of enc] (proj) {projector\\(MLP)};
+\node[bx=cD, right=0.6cm of proj, minimum height=2.2cm, text width=2.1cm] (llm) {language model\\(transformer)};
+\node[bx=gray, below=0.8cm of proj] (txt) {text tokens:\\``what colour is the cube?''};
+\node[bx=cB, right=0.6cm of llm] (out) {``red''};
+\draw[arr] (1.75,-0.8)--(enc); \draw[arr] (enc)--(proj); \draw[arr] (proj)--(llm.west|-proj); \draw[arr] (txt.east)-|([xshift=-3mm]llm.south); \draw[arr] (llm)--(out);
+\end{tikzpicture}
+\caption{A vision-language model. Image patches become tokens in the same space as words, and the language model processes both together.}
+\label{fig:vlm}
+\end{figure}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Why is next-token prediction a classification problem?
+\item What does LoRA train, and why is it cheap?
+\item How many patch tokens does a $256\times256$ image give with $16\times16$ patches?
+\end{enumerate}
+\emph{Answers: 1) the target is one of $V$ discrete tokens; 2) two thin matrices $B$ and $A$ added to frozen weights, so only a tiny fraction of the parameters gets gradients and optimiser state; 3) $16\times16=256$.}
+\end{quizbox}
+
+% --------------------------------------------------------------------
+\section{Generative models for continuous outputs: diffusion and flow matching}
+\label{sec:diffusion}
+
+\subsection{Why regression fails for actions}
+Imagine a drone in front of a pole. Half of the human demonstrations fly left around it and half fly right. Train a regression model with squared error, and it predicts the \emph{mean} of the demonstrations: straight ahead, into the pole. The course's regression answer, $\E[y\mid\x]$, is the wrong answer when the data has several good modes. Figure~\ref{fig:bimodal} shows the toy version: the demonstrations cluster at $-1$ and $+1$, and the regression output is \bimean, between the modes, where no demonstration ever went.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=10cm,height=4.8cm, xmin=-2, xmax=2, ymin=0, ymax=1.65, xlabel={sideways action $a$ (left $<0<$ right)}, ylabel={density}, legend style={at={(0.5,1.03)},anchor=south}, legend columns=2]
+\addplot[ybar interval, fill=cA!35, draw=cA!70] table[x=x,y=demo]{figs/bimodal.dat}; \addlegendentry{400 demonstrations}
+\addplot[ybar interval, fill=none, draw=cB, thick] table[x=x,y=gen]{figs/bimodal.dat}; \addlegendentry{samples of a generative policy}
+\draw[very thick, color=black] (axis cs:\bimean,0) -- (axis cs:\bimean,1.45) node[right,font=\scriptsize]{regression output};
+\fill[gray!40] (axis cs:-0.25,0) rectangle (axis cs:0.25,0.12); \node[font=\scriptsize] at (axis cs:0,0.22) {pole};
+\end{axis}
+\end{tikzpicture}
+\caption{Two equally good ways around an obstacle. Squared-error regression averages them and flies into the pole. A generative policy (here a two-component Gaussian mixture fitted to the same data) samples one mode or the other.}
+\label{fig:bimodal}
+\end{figure}
+
+The fix is to learn the whole distribution $p(\av\mid\text{observation})$ and \emph{sample} from it. Three families appear in VLAs: discretise the action into tokens and use a softmax (which can represent several modes, Section~\ref{sec:actrep}); diffusion; and flow matching.
+
+\begin{probbox}{the best guess under squared error is the mean; mixture distributions}
+\textbf{Derivation.} Which single number $c$ minimises the expected squared error $f(c)=\E[(Y-c)^2]$? Expand: $f(c)=\E[Y^2]-2c\,\E[Y]+c^2$. Set the derivative to zero: $-2\E[Y]+2c=0$, so $c=\E[Y]$. With an input, the same argument for each $\x$ separately gives the best predictor $\hat y(\x)=\E[Y\mid\x]$, the \emph{conditional mean}. A network trained with MSE and enough data learns this conditional mean.
+
+\textbf{Bias and variance again.} Adding and subtracting $\E Y$: $\E[(Y-c)^2]=\mathrm{Var}(Y)+(\E Y-c)^2$ (the cross term has expectation $2(\E Y-c)\E[Y-\E Y]=0$). The first part is noise no predictor can remove, the second is the error of the guess. This is the decomposition from your course book, for a single point.
+
+\textbf{Why this is bad here.} Half the mass at $-1$ and half at $+1$ give $\E[Y]=\tfrac12(-1)+\tfrac12(+1)=0$: the pole. (The data in Figure~\ref{fig:bimodal} give \bimean.) Under absolute error the best guess is the \emph{median}, which for this data is also between the modes, so changing the loss does not help; changing the model does.
+
+\textbf{Mixture distributions.} A Gaussian mixture is $p(a)=\sum_{k=1}^K\pi_k\,\mathcal N(a;\mu_k,\sigma_k^2)$ with weights $\pi_k\ge0$, $\sum_k\pi_k=1$. To sample: pick component $k$ with probability $\pi_k$, then sample from that Gaussian. The fit in Figure~\ref{fig:bimodal} found $\pi\approx(0.47,0.53)$, $\mu\approx(-1.03,\,0.98)$, $\sigma\approx0.17$. It was fitted with the EM algorithm, which alternates between computing, for each point, the probability that it came from each component, and refitting each component's mean and spread with those probabilities as weights.
+\end{probbox}
+
+\subsection{Diffusion: learn to remove noise}
+Diffusion models (Ho et al., 2020) define a fixed process that slowly destroys data with Gaussian noise, and learn to run it backwards.
+\begin{itemize}
+\item \textbf{Forward (fixed):} $\x_t=\sqrt{\bar\alpha_t}\,\x_0+\sqrt{1-\bar\alpha_t}\,\bm\epsilon$ with $\bm\epsilon\sim\mathcal N(0,I)$, where $\bar\alpha_t$ falls from 1 (clean) to 0 (pure noise) as $t$ grows.
+\item \textbf{Training:} a network $\bm\epsilon_\theta(\x_t,t)$ learns to predict the noise that was added: $\mathcal L=\E\lVert\bm\epsilon-\bm\epsilon_\theta(\x_t,t)\rVert^2$. This is ordinary regression with a squared error.
+\item \textbf{Sampling:} start from pure noise and repeatedly subtract a little of the predicted noise, typically 10--100 steps.
+\end{itemize}
+The regression here does not average modes away, because the network only predicts the \emph{noise} at each step, and early noisy steps decide which mode the sample falls into. Figure~\ref{fig:diff} shows the distribution of our bimodal action at four noise levels, computed in closed form.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=10cm,height=4.8cm, xmin=-3, xmax=3, ymin=0, ymax=1.5, xlabel={action $x$}, ylabel={density $p(x_t)$}, legend pos=north east]
+\addplot[very thick, cA] table[x=x,y=p0]{figs/diffusion.dat}; \addlegendentry{$\bar\alpha=1$ (data)}
+\addplot[thick, cC] table[x=x,y=p1]{figs/diffusion.dat}; \addlegendentry{$\bar\alpha=0.7$}
+\addplot[thick, cD] table[x=x,y=p2]{figs/diffusion.dat}; \addlegendentry{$\bar\alpha=0.3$}
+\addplot[thick, dashed, cB] table[x=x,y=p3]{figs/diffusion.dat}; \addlegendentry{$\bar\alpha=0$ (noise)}
+\end{axis}
+\end{tikzpicture}
+\caption{The forward diffusion process on the bimodal action data. Noise blurs the two peaks into a single Gaussian. Sampling runs this picture from the dashed curve back to the blue one.}
+\label{fig:diff}
+\end{figure}
+
+\begin{probbox}{scaling and adding Gaussians; the curves of Figure~\ref{fig:diff}}
+\textbf{Rule.} If $X\sim\mathcal N(m,v)$ and $\epsilon\sim\mathcal N(0,1)$ are independent, then $aX+b\epsilon\sim\mathcal N(am,\ a^2v+b^2)$. The mean follows from linearity of expectation, the variance from $\mathrm{Var}(aX)=a^2\mathrm{Var}(X)$ plus ``variances of independent variables add''; that the result is again Gaussian is a special property of the Gaussian.
+
+\textbf{Why the square roots.} With $a=\sqrt{\bar\alpha_t}$ and $b=\sqrt{1-\bar\alpha_t}$: if the data has variance 1, then $\mathrm{Var}(\x_t)=\bar\alpha_t\cdot1+(1-\bar\alpha_t)=1$ at every step. The noise replaces the signal without changing the overall scale (``variance preserving'').
+
+\textbf{The curves.} Our data is the mixture $\tfrac12\mathcal N(-1,s_0^2)+\tfrac12\mathcal N(+1,s_0^2)$ with $s_0=0.15$. Applying the rule to each component:
+\[
+p(x_t)=\tfrac12\,\mathcal N\big(x;-\sqrt{\bar\alpha},\ \bar\alpha s_0^2+1-\bar\alpha\big)+\tfrac12\,\mathcal N\big(x;+\sqrt{\bar\alpha},\ \bar\alpha s_0^2+1-\bar\alpha\big).
+\]
+At $\bar\alpha=1$ this is the data; at $\bar\alpha=0$ both components become $\mathcal N(0,1)$. These are exactly the four curves plotted.
+
+\textbf{Why predicting the noise is enough.} Given $\x_t$ and a noise estimate $\hat{\bm\epsilon}$, invert the forward formula: $\hat\x_0=(\x_t-\sqrt{1-\bar\alpha_t}\,\hat{\bm\epsilon})/\sqrt{\bar\alpha_t}$. By the previous box, the network trained with squared error learns $\E[\bm\epsilon\mid\x_t]$. When $\x_t$ is only slightly noisy it already reveals which mode it came from, so this average is taken within one mode, and the modes are not averaged together.
+\end{probbox}
+
+\subsection{Flow matching: learn a velocity field}
+Flow matching (Lipman et al., 2023) is a simpler relative that is now the standard in VLAs (it is what $\pi_0$ uses). Pair a noise sample $\x_0\sim\mathcal N(0,I)$ with a data sample $\x_1$, and connect them by a straight line $\x_\tau=(1-\tau)\x_0+\tau\x_1$ for $\tau\in[0,1]$. The velocity along that line is $\x_1-\x_0$. A network $\vect v_\theta(\x_\tau,\tau)$ learns to predict it:
+\begin{equation}
+\mathcal L=\E_{\tau,\x_0,\x_1}\big\lVert \vect v_\theta(\x_\tau,\tau)-(\x_1-\x_0)\big\rVert^2 .
+\end{equation}
+To sample, start from noise and integrate $\mathrm d\x/\mathrm d\tau=\vect v_\theta(\x,\tau)$ from $\tau=0$ to $1$ with a few Euler steps (often 5--10). In a robot the network is also given the observation, so it learns $p(\av\mid\text{obs})$.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=8cm,height=5cm, xmin=-0.05, xmax=1.05, ymin=-2.6, ymax=2.6, xlabel={time $\tau$}, ylabel={action value}, xtick={0,0.5,1}]
+\input{figs/flow_paths.tex}
+\node[font=\scriptsize,anchor=west] at (axis cs:0.02,2.35) {noise $\x_0$};
+\node[font=\scriptsize,anchor=east] at (axis cs:0.98,2.35) {data $\x_1$ (two modes)};
+\end{axis}
+\end{tikzpicture}
+\caption{Flow-matching training pairs. Each grey line connects a noise sample (blue) to a data sample (orange). The network learns the average velocity of the lines passing through each point, and integrating that velocity carries noise to data.}
+\label{fig:flow}
+\end{figure}
+
+\begin{probbox}{why regressing on single pairs gives the right velocity field}
+Many grey lines in Figure~\ref{fig:flow} pass through the same point $(\tau,x)$, each with its own target velocity $u=x_1-x_0$. The network cannot match all of them. By the ``best guess is the mean'' box, the minimiser of $\E\lVert\vect v(\x_\tau,\tau)-\vect u\rVert^2$ is the conditional mean
+\[
+\vect v^\star(\x,\tau)=\E\big[\x_1-\x_0\ \big|\ \x_\tau=\x\big],
+\]
+the average velocity of all lines through that point. Lipman et al.\ (2023) proved that following this averaged field from $\tau=0$ to $1$ carries the noise distribution exactly onto the data distribution, even though no single sample moves along a straight line any more. Sampling uses Euler steps, $\x_{\tau+\Delta}=\x_\tau+\Delta\,\vect v_\theta(\x_\tau,\tau)$; with $\Delta=0.1$ that is ten network calls.
+\end{probbox}
+
+\begin{plainbox}
+Diffusion and flow matching turn ``generate a sample from a complicated distribution'' into many small regression problems. That is why they train as stably as regression but do not average modes away. The price is several network evaluations per sample instead of one.
+\end{plainbox}
+
+\begin{quizbox}
+\begin{enumerate}[leftmargin=*]
+\item Give a drone example of a bimodal action distribution other than the pole.
+\item In flow matching, what is the regression target for the pair $\x_0=-0.5$, $\x_1=1$?
+\item Why do diffusion and flow models need several network calls per sample?
+\end{enumerate}
+\emph{Answers: 1) e.g.\ overtaking another drone above or below it, or entering a room through either of two doors; 2) the velocity $1-(-0.5)=1.5$, at every $\tau$; 3) a sample is produced by integrating many small steps from noise to data.}
+\end{quizbox}

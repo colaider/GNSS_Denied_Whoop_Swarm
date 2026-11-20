@@ -1,0 +1,154 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm,bm,mathtools}
+\usepackage{booktabs,array,tabularx}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,matrix,fit,backgrounds,decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=MidnightBlue,urlcolor=MidnightBlue,citecolor=MidnightBlue]{hyperref}
+\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}
+\setlist{itemsep=2pt,topsep=3pt}
+
+% ---------- boxes (same family as the DVS guide and the course book) ----------
+\newtcolorbox{plainbox}{colback=blue!4,colframe=MidnightBlue,title=In plain words,fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\newtcolorbox{watchbox}{colback=orange!6,colframe=BurntOrange,title=Watch out,fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\newtcolorbox{examplebox}{colback=gray!6,colframe=gray!60,title=Worked example,fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\newtcolorbox{whybox}{colback=violet!4,colframe=violet!60!black,title=Why it is true,fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\newtcolorbox{algbox}[1][]{colback=white,colframe=black!50,title={#1},fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\newtcolorbox{quizbox}{colback=yellow!7,colframe=olive!70!black,title=Check yourself,fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+\definecolor{addc}{HTML}{0f7b6c}
+\definecolor{opc}{HTML}{b3261e}
+\newtcolorbox{bridgebox}{colback=addc!5,colframe=addc,title={From your course book},fonttitle=\bfseries\small,boxrule=0.8pt,arc=2pt,breakable,leftrule=3pt}
+\newtcolorbox{opinionbox}{colback=opc!4,colframe=opc,title={My assessment, not a published result},fonttitle=\bfseries\small,boxrule=0.8pt,arc=2pt,breakable,leftrule=3pt}
+\newtcolorbox{probbox}[1]{colback=addc!6,colframe=addc!85!black,title={$\Sigma$\ \ Probability \& derivation: #1},fonttitle=\bfseries\small,boxrule=0.8pt,arc=2pt,breakable,leftrule=3pt}
+\newtcolorbox{paperbox}[1]{colback=white,colframe=MidnightBlue!70,coltitle=white,colbacktitle=MidnightBlue!70,title={Paper card: #1},fonttitle=\bfseries\small,boxrule=0.6pt,arc=2pt,breakable}
+
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\x}{\vect{x}}
+\newcommand{\w}{\vect{w}}
+\newcommand{\h}{\vect{h}}
+\newcommand{\y}{\vect{y}}
+\newcommand{\z}{\vect{z}}
+\newcommand{\s}{\vect{s}}
+\newcommand{\av}{\vect{a}}
+\newcommand{\E}{\mathbb{E}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\softmax}{softmax}
+
+% ---------- palette ----------
+\definecolor{cA}{HTML}{2a78d6}
+\definecolor{cB}{HTML}{eb6834}
+\definecolor{cC}{HTML}{1f9e89}
+\definecolor{cD}{HTML}{7a4fb5}
+\definecolor{inkm}{HTML}{52514e}
+\definecolor{gridc}{HTML}{e1e0d9}
+
+\pgfplotsset{
+  every axis/.append style={axis lines=left, grid=major, grid style={gridc}, tick label style={font=\scriptsize,color=inkm},
+     label style={font=\small}, title style={font=\small\bfseries}, legend style={font=\scriptsize,draw=none,fill=white,fill opacity=0.85,text opacity=1},
+     width=7.2cm, height=5.2cm},
+  cemcont/.style={color=gray!55, thin, no marks},
+}
+\tikzset{
+  bx/.style={draw=inkm, rounded corners=2pt, fill=#1!9, align=center, font=\small, inner sep=4pt, minimum height=0.8cm},
+  bx/.default=cA,
+  arr/.style={-{Stealth[length=2mm]}, thick, color=inkm},
+  darr/.style={-{Stealth[length=2mm]}, thick, dashed, color=cB},
+  lbl/.style={font=\scriptsize, color=inkm, align=center},
+  flowp/.style={color=inkm!55, thin},
+}
+
+\input{figs/attn_meta.tex}
+\input{figs/bimodal_meta.tex}
+\input{figs/covshift_meta.tex}
+\input{figs/compound_meta.tex}
+\input{figs/cem_iters.tex}
+
+\title{\textbf{Robots that Think and Imagine}\\[4pt]
+\large Background notes on reasoning vision-language-action models and world models,\\ from linear regression to the research front\\[2pt]
+\normalsize With a reading list, a map of the open problems for drones,\\ and every probability formula explained and derived}
+\date{November 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section*{How to read these notes}
+\addcontentsline{toc}{section}{How to read these notes}
+
+These notes start where your machine-learning course ends: linear and logistic regression, gradient descent, bias and variance, and convolutional networks. They end at two research topics that are moving fast in 2025--2026:
+\begin{itemize}
+\item \textbf{Reasoning vision-language-action models (VLAs):} one network that looks at camera images, reads an instruction such as ``put the red cube in the box'', \emph{thinks in steps}, and outputs motor commands.
+\item \textbf{World models:} a network that predicts what the robot will see and where it will be \emph{if} it takes a certain action, so the robot can try plans in imagination before it moves.
+\end{itemize}
+Figure~\ref{fig:roadmap} shows the dependency chain. Every arrow is a chapter you need before the next one. Parts I and II are background; Part III is VLAs; Part IV is world models; Part V puts them together for drones and gives the reading list.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4mm and 6mm, every node/.style={font=\small}]
+\node[bx=gray] (c) {Your course:\\regression, GD,\\CNNs};
+\node[bx, right=of c] (nn) {\S1 Neural nets\\+ backprop};
+\node[bx, right=of nn] (emb) {\S2 Embeddings,\\latent spaces};
+\node[bx, right=of emb] (tr) {\S3 Attention,\\transformers};
+\node[bx, below=9mm of tr] (llm) {\S4 LLMs, VLMs,\\chain-of-thought};
+\node[bx, left=of llm] (gen) {\S5 Diffusion,\\flow matching};
+\node[bx=cC, left=of gen] (rl) {\S6 Decisions,\\RL, MDPs};
+\node[bx=cC, left=of rl] (il) {\S7 Imitation\\learning};
+\node[bx=cB, below=9mm of il, xshift=12mm] (vla) {\S8 VLAs};
+\node[bx=cB, right=of vla] (rvla) {\S9 Reasoning\\VLAs};
+\node[bx=cD, right=of rvla] (wm) {\S10--13 World\\models};
+\node[bx=gray, right=of wm] (you) {\S14--15 Drones,\\your thesis};
+\draw[arr] (c)--(nn); \draw[arr] (nn)--(emb); \draw[arr] (emb)--(tr); \draw[arr] (tr)--(llm);
+\draw[arr] (nn.south) |- ++(0,-0.45) -| (gen.north);
+\draw[arr] (c.south) |- ++(0,-0.45) -| (rl.north);
+\draw[arr] (rl)--(il);
+\draw[arr] (il.south) -- ++(0,-0.3) -| (vla.north);
+\draw[arr] (gen.south) |- ++(0,-0.3) -| ([xshift=4mm]vla.north);
+\draw[arr] (llm.south) -- ++(0,-0.25) -| (rvla.north);
+\draw[arr] (vla)--(rvla); \draw[arr] (rvla)--(wm); \draw[arr] (wm)--(you);
+\end{tikzpicture}
+\caption{Road map. Grey: what you already have and where you are going. Blue: deep-learning background. Green: robot-learning background. Orange: VLAs. Violet: world models.}
+\label{fig:roadmap}
+\end{figure}
+
+\textbf{The boxes.} The box styles are the same as in your course book. Four are new:
+\begin{bridgebox}
+Links a new idea back to a chapter of the course book, so you can see that it is an old idea in new clothes.
+\end{bridgebox}
+\begin{opinionbox}
+My own judgement or prediction, for example where I think the open research gaps are. Everything outside these boxes is either textbook material or what a cited paper reports.
+\end{opinionbox}
+\begin{paperbox}{Author et al.\ (year)}
+A short summary of one paper: what problem, what idea, what result. The full list with arXiv numbers is in the Sources section at the end.
+\end{paperbox}
+\begin{probbox}{name of the idea}
+Explains a probability or statistics idea the first time it is used, from zero, and derives the formula that appears in the text. Later chapters point back to these boxes instead of repeating them.
+\end{probbox}
+
+\textbf{About the numbers in the figures.} Every plot is drawn from small synthetic experiments that I ran for these notes (the script \texttt{make\_data.py} sits next to this file). They are toys, chosen so that you can redo every number by hand or in ten lines of NumPy. They are \emph{not} results from the papers.
+
+\textbf{About the papers.} For papers from 2024 and earlier I describe what is well established. For the many 2026 papers in Part V I read the abstracts and summaries, not every page. Treat their numbers as ``what the authors report''.
+
+% =====================================================================
+\part{Deep-learning background}
+\input{part1.tex}
+\part{Robot-learning background}
+\input{part2.tex}
+\part{Vision-language-action models}
+\input{part3.tex}
+\part{World models}
+\input{part4.tex}
+\part{Putting it together: drones and your thesis}
+\input{part5.tex}
+
+\end{document}
