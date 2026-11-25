@@ -196,6 +196,11 @@ void Sensors::updateFix(uint32_t nowUs) {
   pseudoUs_ = nowUs;
   if (hFix_ != Fix::TRACKING && (still_ || hFix_ == Fix::LOST))
     hkf_.zeroVelocity(nowUs, still_ ? cfg_.stillVelStd : cfg_.lostVelStd);
+  if (grounded_ && vFix_ != Fix::TRACKING) {       // on the floor (READY, SPINUP): the ToF reads 0 mm there (invalid),
+    vkf_.setHeight(nowUs, 0.0f, cfg_.groundZStd);  // so the height ran on the spinning-up accelerometer alone: vz
+    vkf_.zeroVelocity(nowUs, cfg_.groundVelStd);   // -0.2..-0.7 m/s at the climb, then a jump when the ToF came
+    return;                                        // back (logs 24.11: up to 3.4 m/s, climb - stop - fall - climb)
+  }
   if (vFix_ != Fix::TRACKING && (still_ || vFix_ == Fix::LOST))
     vkf_.zeroVelocity(nowUs, still_ ? cfg_.stillVelStd : cfg_.lostVelStd);
 }

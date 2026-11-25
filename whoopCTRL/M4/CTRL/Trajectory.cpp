@@ -2,19 +2,14 @@
 
 namespace ctrl {
 
-const char* Trajectory::stateName() const {
-  static const char* const names[] = {"IDLE", "WAITING", "PLAYING", "EMPTY", "HOLD"};
-  return names[state_];
-}
-
-void Trajectory::start(uint16_t id, uint32_t startUs) {
-  if (state_ != IDLE && id == id_) return;                    // the PC sends it a few times
-  clear();
-  id_ = id;  startUs_ = startUs;  state_ = WAITING;
+bool Trajectory::start(uint16_t id, uint32_t startUs) {
+  if (id == id_) return false;                                // the PC sends it a few times
+  id_ = id;  startUs_ = startUs;  n_ = 0;
+  return true;
 }
 
 void Trajectory::add(uint16_t id, const msg::TrajPoint* pts, int n) {
-  if (state_ == IDLE || id != id_) return;
+  if (id_ == 0 || id != id_) return;
   for (int i = 0; i < n; i++) {
     const msg::TrajPoint& q = pts[i];
     int k = n_;
@@ -32,25 +27,14 @@ void Trajectory::drop() {
   n_--;
 }
 
-bool Trajectory::update(uint32_t nowUs) {
-  if (state_ == IDLE) return false;
-  v_ = a_ = sensors::Pose();
-  if (state_ == HOLD) return true;
-
+bool Trajectory::sample(uint32_t nowUs, sensors::Pose& p, sensors::Pose& v, sensors::Pose& a) {
   const float t = (int32_t)(nowUs - startUs_) * 1e-6f;       // trajectory time, s
   while (n_ >= 2 && pts_[1].tMs * 1e-3f <= t) drop();         // pts_[0]: the last point at or before t
-  if (n_ == 0 || t < pts_[0].tMs * 1e-3f) { state_ = n_ || t < 0.0f ? WAITING : EMPTY; return true; }   // keep p_
-  const msg::TrajPoint& a = pts_[0];
-  if (n_ == 1) {                                              // no point after it yet: wait there
-    p_ = {a.x, a.y, a.z, a.yaw};
-    state_ = EMPTY;
-    return true;
-  }
+  if (!eval(t, p, v, a)) return false;
 
-  eval(t, p_, v_, a_);
-  sensors::Pose pl, vl, al;                                   // the acceleration leadS ahead: the tilt arrives
-  if (leadS > 0.0f && eval(t + leadS, pl, vl, al)) a_ = al;   // that much later (beyond the points: as at t)
-  state_ = PLAYING;
+  sensors::Pose pl, vl, al;                                   // the acceleration ahead: the tilt / thrust arrives
+  if (leadS > 0.0f && eval(t + leadS, pl, vl, al)) { a.x = al.x;  a.y = al.y; }   // that much later (beyond the
+  if (leadZS > 0.0f && eval(t + leadZS, pl, vl, al)) a.z = al.z;                  // points: as at t)
   return true;
 }
 

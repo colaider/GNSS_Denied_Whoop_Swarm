@@ -1,6 +1,6 @@
 // ToF - the VL53L1CB distance sensor (pointing down) on the M4, read without waiting.
 //
-// It measures continuously (default: short mode, 20 ms per measurement = 50 Hz). update()
+// It measures continuously (default: long mode, 33 ms per measurement, every 37 ms = 27 Hz). update()
 // only reads when a new measurement is ready, so it never blocks the control loop.
 // Each measurement is stamped with the shared clock at the MIDDLE of its integration time
 // (when the distance was measured), not when it was read.
@@ -22,13 +22,14 @@
 namespace sensors {
 
 struct ToFConfig {
-  bool     longMode  = false;      // false: short mode (to ~1.3 m, best in daylight); true: ~4 m
-  uint32_t budgetUs  = 20000;      // time per measurement (short >= 20 ms, long >= 33 ms)
+  bool     longMode  = true;       // true: long mode (~4 m); false: short (to ~1.3 m). Short lost the floor above
+                                   // ~1.05 m (signal 17 -> 8, status 7/4): the height drifted low, it climbed to 1.9 m (log 18.11 00:05)
+  uint32_t budgetUs  = 33000;      // time per measurement (short >= 20 ms, long >= 33 ms)
   float    minRangeM = 0.001f;     // closer than this is not trusted (0 mm: a glitch, the camera divides by it -> NaN,
                                    // hover log 04.11). Was 0.04: on the floor it reads 2-8 mm
                                    // (status 0, strong signal, kfCalib 03.11), and without it the height ran on
                                    // the vibrating IMU alone at every takeoff (z -0.08 m, vz -0.6 m/s)
-  float    maxRangeM = 1.3f;       // farther than this is not trusted
+  float    maxRangeM = 3.0f;       // farther than this is not trusted (was 1.3: the short mode's end)
   float    minSignal = 0.5f;       // weaker return (MCPS) is not trusted: dark or far floor
 };
 

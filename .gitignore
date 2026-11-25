@@ -1,5 +1,11 @@
 # flight / calibration logs: big, kept on the PC only
 **/logs/
+collectedData/oldLogs/
+
+# datasets made from the logs (python collectedData/makeDataset.py rebuilds them); flights.csv > 100 MB
+collectedData/flights.csv
+collectedData/training_z.csv
+collectedData/pushes.csv
 
 # Python
 __pycache__/

@@ -7,19 +7,24 @@
 namespace ctrl {
 
 struct PosConfig {
-  sensors::Pose f1{9.81f, 9.81f, 60.0f, 8.0f};    
-  sensors::Pose f2{0.4f, 0.4f, 0.5f, 0.0f};       // yaw 0: f2/f1 = 1 passed the gyro noise straight to the FC (+-20 deg/s on the ground, FC disarmed)       
-  // The drone's gains (x y z yaw). x / y: 4 / 3.2 / 0.8 flew the forward-back trajectory well (17.11: x err
-  // 1.6 cm, y 1.2), autoTune went higher on 8 cm steps (x 5 / 3.2 / 1.0, y 6.25 / 4.0 / 1.25: noisy, the drone
-  // is symmetric): between, kd / sqrt(kp) kept (damping). z: 4 / 4 / 2.5: the lift changes ~5 % for 2-3 s
-  // (own downwash; parked it sank 14 cm while the throttle rose, log 17.11 15:47), 3 / 1.0 caught it too
-  // slowly; 3.5 / 3.5 / 2.0: z sd 3.5 cm, max 9.8 (16:27), one step stiffer now: 4 / 4 / 2.5.
-  // (4.5 swung at 1.7 s, but the height was noisy then; it comes from the ToF now.)
-  // autoTune.py starts from these.
-  sensors::Pose kp{4.5f, 4.5f, 4.0f, 3.0f};
-  sensors::Pose kd{3.4f, 3.4f, 4.0f, 0.0f};
-  sensors::Pose ki{0.9f, 0.9f, 2.5f, 0.0f};
-  sensors::Pose iLimit{1.0f, 1.0f, 3.0f, 0.5f};
+  sensors::Pose f1{9.81f, 9.81f, 27.5f, 8.0f};
+  sensors::Pose f2{0.4f, 0.4f, 0.5f, 0.0f};           
+  // 24.11: damped (zeta = kd / (2 sqrt(kp)) = 1.2, was 0.69 z / 0.8 x y), x / y softer (kp 4.5 -> 3), and the
+  // integral frozen while the setpoint moves (iFreezeVel). Simulated (20 cm min-jerk move, delay z 0.1 / x y
+  // 0.2 s, real gain 20 % off, constant push): overshoot z 1.4 -> 0.6 cm, x / y 1.8 -> 1.1 cm, settled in
+  // z 1.9 -> 0.8 s, x / y 1.0 -> 0.7 s. The integral adding up during a move was what carried it past the end.
+  // x / y 24.11 22:2x: kp 3 -> 4, kd 4.16 -> 3.4, ki 0.6 -> 0.4. kd 4.16 doubled the fast tilt jitter
+  // (pitch 2-5 Hz 0.28 -> 0.57 deg: kd x the camera's speed noise); the slow swing is limited by the tilt lag.
+  sensors::Pose kp{4.0f, 4.0f, 2.75f, 3.0f};
+  sensors::Pose kd{3.4f, 3.4f, 3.98f, 0.0f};
+  // ki z 0.69 -> 0.4: above kp^2 / (4 kd) = 0.47 the slow poles are complex: the integral swung the height
+  // 4-6 cm every 10-15 s (log 24.11 21:26, poles -0.40 +- 0.24j); 0.4: all real (-3.15, -0.6, -0.2).
+  sensors::Pose ki{0.4f, 0.4f, 0.4f, 0.0f};
+  sensors::Pose iLimit{1.0f, 1.0f, 1.38f, 0.5f};
+  float iFreezeVel = 0.01f;       // m/s: an axis' integral stands still while its setpoint moves faster than this
+  float climbKpScale = 0.7f;
+  float climbKdScale = 0.84f;
+  float climbKiScale = 0.0f;
 
   float throttleHover = 0.34f;    // until the battery is read: then 2.59 / V (SMConfig::hoverThrottleV)
   float throttleMin   = 0.05f;
@@ -50,16 +55,18 @@ public:
 
     Command update(const sensors::Pose& p, const sensors::Pose& vel, const sensors::Pose& target, float dt, const sensors::Pose& targetVel = sensors::Pose(), const sensors::Pose& targetAcc = sensors::Pose());
     Command translate(const LinCMD& u) const;        
-    LinCMD  controller(const sensors::Pose& p, const sensors::Pose& vel, const sensors::Pose& target, float dt, const sensors::Pose& targetVel, const sensors::Pose& targetAcc);   
+    LinCMD  controller(const sensors::Pose& p, const sensors::Pose& vel, const sensors::Pose& target, float dt, const sensors::Pose& targetVel, const sensors::Pose& targetAcc);
 
-    void reset() { integ_ = sensors::Pose(); }       
+    void reset() { integ_ = sensors::Pose(); }
+    void climbGains(bool on) { climb_ = on; }       // z: the climb gain set (true) or the hover one
     void resetXY() { integ_.x = integ_.y = 0.0f; }
-    const sensors::Pose& integral() const { return integ_; }     
+    const sensors::Pose& integral() const { return integ_; }
     PosConfig& config() { return cfg_; }           
 
 private:
     PosConfig     cfg_;
-    sensors::Pose integ_;                         
+    sensors::Pose integ_;
+    bool          climb_ = false;                 // climbGains()
 };
 
 } 

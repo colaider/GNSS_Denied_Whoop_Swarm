@@ -8,12 +8,19 @@
 
 namespace sensors {
 
-// LSM6DSOX, the settings imu_calib.h was measured with (416 Hz, +-4 g, +-2000 dps)
-static const uint8_t REG_WHO_AM_I = 0x0F, REG_CTRL1_XL = 0x10, REG_CTRL2_G = 0x11;
+// LSM6DSOX. imu_calib.h was measured at 416 Hz, +-4 g, +-2000 dps (its values are in g / dps, so they still
+// apply; recheck with test/imu_calib if the level or |g| looks off).
+// Accelerometer 24.11: in flight it read -3.5 m/s^2 on average in hover (impossible: 0) and swung +-2 m/s^2 for
+// seconds while the ToF saw the drone nearly still. +-4 g clipped the motor vibration (one-sided clipping = an
+// offset that moves with the throttle) and 416 Hz without a filter folded it down into slow fake motion. Now:
+// +-16 g (no clipping), sampled at 1.66 kHz through the sensor's own low-pass LPF2 at ODR / 45 = 37 Hz, so the
+// vibration is removed before it is sampled. Read at the gyro's 416 Hz (always the newest, already filtered).
+static const uint8_t REG_WHO_AM_I = 0x0F, REG_CTRL1_XL = 0x10, REG_CTRL2_G = 0x11, REG_CTRL8_XL = 0x17;
 static const uint8_t REG_CTRL3_C = 0x12, REG_STATUS = 0x1E, REG_OUTX_L_G = 0x22;
-static const uint8_t CTRL1_XL_VAL = 0x68;          // 416 Hz | +-4 g
+static const uint8_t CTRL1_XL_VAL = 0x86;          // ODR 1.66 kHz (1000) | +-16 g (FS 01) | LPF2 on
+static const uint8_t CTRL8_XL_VAL = 0x60;          // LPF2 cutoff ODR / 45 (HPCF 011), low-pass path
 static const uint8_t CTRL2_G_VAL  = 0x6C;          // 416 Hz | +-2000 dps
-static const float   ACC_LSB      = 0.122e-3f;     // g per count
+static const float   ACC_LSB      = 0.488e-3f;     // g per count at +-16 g (0.122e-3 at +-4 g)
 static const float   GYRO_LSB     = 0.070f;        // dps per count
 
 static const float DEG2RAD   = 0.017453293f;
@@ -44,6 +51,7 @@ bool IMU::begin() {
   if (id != 0x6C) return false;
 
   writeReg(REG_CTRL3_C, 0x44);                     // block data update + address auto-increment
+  writeReg(REG_CTRL8_XL, CTRL8_XL_VAL);            // the low-pass first, then the rate / range that switches it on
   writeReg(REG_CTRL1_XL, CTRL1_XL_VAL);
   writeReg(REG_CTRL2_G, CTRL2_G_VAL);
   return true;

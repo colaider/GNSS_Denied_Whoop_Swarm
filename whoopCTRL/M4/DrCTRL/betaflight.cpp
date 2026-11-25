@@ -139,7 +139,10 @@ void Betaflight::update(uint32_t nowUs) {
 
   if (motorTest_ && (uint32_t)(now_ - motorUs_) > cfg_.motorTestTimeoutMs * 1000UL) stopMotors();
 
-  if ((uint32_t)(now_ - rcUs_) >= 1000000UL / cfg_.rcRateHz) {
+  // RC frames: command() sends each new command at once (at most rcRateHz). Here only when no fresh
+  // command drives them (disarmed, arming, commands stopped): Betaflight needs the steady stream.
+  const uint32_t rcPeriod = 1000000UL / cfg_.rcRateHz;
+  if ((uint32_t)(now_ - rcUs_) >= rcPeriod && (!haveCmd_ || armStage_ || (uint32_t)(now_ - cmdUs_) >= rcPeriod)) {
     sendRc();
     if (motorTest_) sendMotors();                  // keep repeating what the test asked for
   }
@@ -188,6 +191,9 @@ void Betaflight::command(float r, float p, float y, float t) {   // NaN (passes 
   if (!armStage_ && isfinite(t)) stick_[3] = bfClamp(t, 0.0f, 1.0f);   // arming keeps the throttle low
   cmdUs_ = now_;
   haveCmd_ = true;
+  // out now, not at the next RC tick: the command waited 0..1 period there (avg 10 ms at 50 Hz), and
+  // update() runs before the controller, so each frame carried the previous loop's command
+  if (!armStage_ && (uint32_t)(now_ - rcUs_) >= 1000000UL / cfg_.rcRateHz) sendRc();
 }
 
 void Betaflight::setSticks(float roll, float pitch, float yaw, float throttle) { command(roll, pitch, yaw, throttle); }

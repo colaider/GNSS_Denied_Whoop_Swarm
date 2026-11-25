@@ -53,7 +53,9 @@
 // ---- the UART to the FC ----
 // On the M4, Serial1 does NOT reach J2 pins 3 / 4 (tested); USART1 on PA9 / PA10 does.
 #define BF_USE_USART1 1      // 1: begin() opens USART1, TX PA9 (J2 pin 3), RX PA10 (J2 pin 4), and update() reads it
-#define BF_BAUD       115200 // the FC's Ports tab speed for that UART
+#define BF_BAUD       460800 // the FC's Ports tab MSP speed for that UART: BOTH must match (else "FC NOT answering").
+                             // The write BLOCKS the loop until sent (mbed UnbufferedSerial): an 18-channel RC frame
+                             // (42 bytes) = 0.9 ms (3.6 ms at the old 115200), so rcRateHz 100 costs ~9 % of the loop.
 
 namespace drone {
 
@@ -83,7 +85,8 @@ struct BetaflightConfig {
   uint8_t  channels     = 8;       // per RC frame: AETR + AUX1..4 (Betaflight takes up to 18)
   uint8_t  armAux       = 0;       // AUX index of the arm switch (0 = AUX1 = ch5); RX_MSP only
   uint8_t  modeAux      = 1;       // AUX index of the mode switch (1 = AUX2 = ch6)
-  uint16_t rcRateHz     = 50;      // RC frames per second (the guide: 25-50 Hz, steady)
+  uint16_t rcRateHz     = 50;      // RC frames per second, at most (the guide: 25-50 Hz, steady). Each new command
+                                   // goes out at once; Betaflight's auto RC smoothing cutoff = 0.375 x this
   uint16_t statusRateHz = 10;      // each of status / attitude / battery requested this often
   float    maxAngleDeg  = 55.0f;   // full stick in ANGLE / HORIZON (Betaflight 4.4 level_angle_limit)
   float    maxRateDps[3] = {670.0f, 670.0f, 670.0f};   // full stick in ACRO: roll, pitch, yaw (Actual rates, linear)

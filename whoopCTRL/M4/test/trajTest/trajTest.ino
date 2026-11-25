@@ -1,5 +1,5 @@
-// Trajectory test: hover like hoverTest, then fly the trajectory the PC sends (hoverTest.py, key T:
-// 15 cm forward, 5 s stop, 15 cm back, 5 s stop, again). The M7 runs m7Runner (PC_WIFI 1).
+// Flight sketch: take off, hover, then fly the trajectories the PC sends (controlApp: map click = go there,
+// height box = climb / sink there). The M7 runs m7Runner (PC_WIFI 1).
 
 #ifndef CORE_CM4
 #error "Set Tools > Target core: M4 Co-processor"
@@ -29,18 +29,16 @@ const sensors::Pose HOVER{0.0f, 0.0f, 0.60f, 0.0f};   // where to hover, start f
 drone::BetaflightConfig fcConfig() {
   drone::BetaflightConfig c;
   c.channels = 18;
+  c.rcRateHz = 100;                     // needs BF_BAUD 460800 (both sides): Betaflight smoothing 19 -> 37 Hz
   c.armLowMs = 1000;
   c.armTimeoutMs = 4000;
   return c;
 }
 ctrl::SMConfig smConfig() {
   ctrl::SMConfig c;
-  c.spinupRate = 0.15f;
   c.climbRate = 0.5f;
   c.xyAfterS = 0.3f;
-  c.reachedM = 0.02f;
   c.descendRate = 0.1f;
-  c.safetyRate = 0.1f;
   return c;
 }
 
@@ -73,9 +71,9 @@ void onCommand(uint8_t c) {
   }
   else if (c == msg::CMD_START) {
     if (sm.start()) say("arming");
-    else say("START ignored: press C first (calibrate)");
+    else say(sm.calibrated() && !sm.referenceOk() ? "START ignored: FC not answering, no roll / pitch reference yet" : "START ignored: press C first (calibrate)");
   }
-  else if (c == msg::CMD_HOLD) { sm.heard(); traj.hold(); }
+  else if (c == msg::CMD_HOLD) { sm.heard(); traj.clear(); }   // no more points: the loop holds the last one
   else if (c == msg::CMD_LAND) sm.land();
   else if (c == msg::CMD_KILL) sm.kill();
   else sm.heard();
@@ -84,7 +82,7 @@ void onCommand(uint8_t c) {
 void onStart(const msg::TrajStart& s) {
   sm.heard();
   if (sm.state() != ctrl::StateMachine::FLY) { say("trajectory ignored: not hovering yet (FLY)"); return; }
-  traj.start(s.trajId, shared::nowUs() + s.delayMs * 1000UL);
+  if (traj.start(s.trajId, shared::nowUs() + s.delayMs * 1000UL)) say("trajectory %.0f", s.trajId);
 }
 
 void setGains(const msg::Gains& g) {    // autoTune.py, in flight. Out of 0..15 or NaN: refused
@@ -182,18 +180,15 @@ void sendTelem() {
   m.tofRange = tr.rangeM;  m.tofHeight = sens.height();  m.tofSignal = tr.signalMcps;
   m.tofValid = tr.valid;  m.tofStatus = tr.status;  m.floorSteps = (uint16_t)sens.vertical().steps();
   m.camYawRate = sens.cameraDebug().yawRate * 57.29578f;  m.gyroYawRate = sens.cameraDebug().gyroYawRate * 57.29578f;
+  const sensors::Pose o = sm.origin();
+  m.ox = o.x;  m.oy = o.y;  m.oz = o.z;
   m7.send(msg::PKT_HOVER_TELEM, &m, sizeof(m));
 }
 
 void logChanges() {
   static bool link = false, xy = false;
-  static uint8_t state = 255, ts = 255;
+  static uint8_t state = 255;
   char line[96];
-  if (traj.state() != ts) {
-    ts = traj.state();
-    snprintf(line, sizeof(line), "TRAJ: trajectory %u %s", traj.id(), traj.stateName());
-    m7.log(line);
-  }
   if (sm.xyControl() != xy) {
     xy = sm.xyControl();
     say(xy ? "camera tracking: x / y held from here" : "camera lost: level only, x / y drift");
@@ -225,11 +220,14 @@ void setup() {
 void loop() {
   readM7();
 
-  // up to HOVER, then hold the point reached; a trajectory (key T on the PC) flies from that point
+  // up to HOVER; then the trajectory's point for now, or (no point: not started, ran out, HOLD) the last one,
+  // standing still. Kept relative to the origin: it moves when x / y control comes back after a camera loss.
+  static sensors::Pose rel;                       // the last point, relative to sm.origin()
   const uint32_t now = shared::nowUs();
-  if (sm.state() != ctrl::StateMachine::FLY) traj.clear();
-  if (traj.update(now)) sm.setTarget(sm.origin() + traj.position(), traj.velocity(), traj.acceleration());
-  else sm.setTarget(sm.state() == ctrl::StateMachine::FLY ? sm.origin() : HOVER);
+  sensors::Pose p, v, a;
+  if (sm.state() != ctrl::StateMachine::FLY) { traj.clear();  rel = sensors::Pose();  sm.setTarget(HOVER); }
+  else if (traj.sample(now, p, v, a)) { rel = p;  sm.setTarget(sm.origin() + p, v, a); }
+  else sm.setTarget(sm.origin() + rel);
   sm.step(now);
   logChanges();
 

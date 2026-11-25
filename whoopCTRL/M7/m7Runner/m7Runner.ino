@@ -10,8 +10,7 @@
 // Upload: Tools > Board: Arduino Nicla Vision, Target core: Main Core,
 //         Flash split: "1MB M7 + 1MB M4" (the same split as the M4 sketch, or the M4 won't start).
 // The M7 starts the M4 in setup(). Without an M4 program it waits 5 s, says so and goes on.
-// View on the PC with M7/test/frame_receiver.py (close Serial Monitor first).
-// PC_WIFI 1: the PC link is WiFi (UDP, e.g. M4/test/hoverTest/hoverTest.py), images as row slices
+// PC_WIFI 1: the PC link is WiFi (UDP, controlApp), images as row slices
 // (PKT_FRAME_ROWS, one datagram each); the Nicla's address is printed on the USB serial port at start.
 
 #ifndef CORE_CM7

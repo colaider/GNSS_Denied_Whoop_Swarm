@@ -5,7 +5,7 @@
 // Upload: Tools > Board: Arduino Nicla Vision, Target core: Main Core, Flash split "1MB M7 + 1MB M4".
 // WIFI_AP 1: the Nicla makes its own network: join WIFI_SSID / WIFI_PASS on the PC, the Nicla is
 // 192.168.3.1. WIFI_AP 0: the Nicla joins your network; its address is logged over USB.
-// USB (optional, Serial Monitor closed): python M4/test/armTest/fc_log.py shows the same logs.
+// USB (optional, Serial Monitor closed): python M7/RemoteCTRL/fc_log.py shows the same logs.
 // LED: red = WiFi failed, blue blink = WiFi up waiting for the PC, green blink = the PC talks to us.
 // Needs the WiFi firmware once (File > Examples > STM32H747_System > WiFiFirmwareUpdater).
 

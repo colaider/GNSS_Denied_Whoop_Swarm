@@ -60,17 +60,17 @@ visualVel::visualVelocityVector visualVel::estimateVelocity(uint32_t tUs, const 
     }
     if (used == 0) return out;
 
-    float a, b;                                            
-    if (used >= 4) {
-        const vw lx = linReg(py, qx, used); const vw ly = linReg(px, qy, used);
-        a = lx.w;  b = ly.w;
-        out.yawRate = 0.5f * (lx.v - ly.v) / dt;
-    } else {
-        a = b = 0.0f;
-        for(int i=0;i<used;i++){ a += qx[i] - py[i]*rot.z; b += qy[i] + px[i]*rot.z; }
-        a /= used;  b /= used;
-    }
+    // velocity: the yaw taken out with the gyro, then the average. (The yaw from the line fit as intercept
+    // was noisy, +-15..100 deg/s: points off the centre turned it into 10-50 cm/s of false speed, log 17.11 23:3x)
+    float a = 0.0f, b = 0.0f;
+    for(int i=0;i<used;i++){ a += qx[i] - py[i]*rot.z; b += qy[i] + px[i]*rot.z; }
+    a /= used;  b /= used;
     out.vx = -a * Z / dt; out.vy = -b * Z / dt;            // camera frame, m/s
+
+    if (used >= 4) {                                       // the yaw the camera sees, for the log only (vs the gyro)
+        const vw lx = linReg(py, qx, used); const vw ly = linReg(px, qy, used);
+        out.yawRate = 0.5f * (lx.v - ly.v) / dt;
+    }
     return out;
 }
 

@@ -25,12 +25,21 @@ PosCTRL::Command PosCTRL::update(const sensors::Pose& p, const sensors::Pose& ve
 PosCTRL::LinCMD PosCTRL::controller(const sensors::Pose& p, const sensors::Pose& vel, const sensors::Pose& target, float dt, const sensors::Pose& targetVel, const sensors::Pose& targetAcc) {
   sensors::Pose err = target - p;                                 
   err.yaw = sensors::wrapPi(err.yaw);                              
-  const sensors::Pose errDot = targetVel - vel;                    
-  if (dt > 0.0f && dt < 0.5f) integ_ = pcLimit(integ_ + cfg_.ki * err * dt, cfg_.iLimit);
+  const sensors::Pose errDot = targetVel - vel;
+  sensors::Pose kp = cfg_.kp, kd = cfg_.kd, ki = cfg_.ki;
+  if (climb_) { kp.z *= cfg_.climbKpScale;  kd.z *= cfg_.climbKdScale;  ki.z *= cfg_.climbKiScale; }
+  if (dt > 0.0f && dt < 0.5f) {                                    // the integral keeps its value
+    sensors::Pose add = ki * err * dt;                             // per axis: frozen while that setpoint moves
+    if (fabsf(targetVel.x) > cfg_.iFreezeVel) add.x = 0.0f;        // (it added up during the move and carried
+    if (fabsf(targetVel.y) > cfg_.iFreezeVel) add.y = 0.0f;        // the drone past the end)
+    if (fabsf(targetVel.z) > cfg_.iFreezeVel) add.z = 0.0f;
+    if (fabsf(targetVel.yaw) > cfg_.iFreezeVel) add.yaw = 0.0f;
+    integ_ = pcLimit(integ_ + add, cfg_.iLimit);
+  }
 
-  const sensors::Pose nu = targetAcc + cfg_.kp * err + cfg_.kd * errDot + integ_;
-  const sensors::Pose u  = (pcToBody(nu, p.yaw) + cfg_.f2 * pcToBody(vel, p.yaw)) / cfg_.f1;   // U = f1^-1 (nu + f2 X')
-  return {u.x, u.y, u.z, u.yaw};
+  const sensors::Pose nu = targetAcc + kp * err + kd * errDot + integ_;   // wanted acceleration, m/s^2 (a learned
+  const sensors::Pose u  =(pcToBody(nu, p.yaw) + cfg_.f2 * pcToBody(vel, p.yaw)) / cfg_.f1;   // correction: nu.z - rHat)
+  return {u.x, u.y, u.z, u.yaw};                                    // U = f1^-1 (nu + f2 X'); z: throttle change from hover
 }
 
 PosCTRL::Command PosCTRL::translate(const LinCMD& u) const {

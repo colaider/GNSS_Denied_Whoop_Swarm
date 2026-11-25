@@ -94,7 +94,18 @@ struct SensorsConfig {
   // refused the ToF, forced it back: height 11 -> 1 -> 30 cm, the climb shot to 97 cm; in flight z
   // wandered +-15 cm). So the bias is kept this uncertain before every ToF reading: the height and
   // its rate come from the ToF (2 mm), the accelerometer only adds the fast part.
-  float flyingBiasStd = 3.0f;
+  // 24.11: 3 -> 0.5. With the accelerometer at +-16 g / 1.66 kHz / 37 Hz low-pass (IMU.cpp) it reads 0 in hover
+  // (was -3.5), follows the ToF acceleration (corr 0.44-0.50, gain 0.83-1.06; was ~0.1) and its offset moves
+  // only ~0.26 m/s^2 within 1 s, ~0.1 within 5-10 s. So vz now comes from the accelerometer between ToF readings
+  // (immediate, smooth) and the ToF keeps the height and the offset.
+  // 24.11 22:39: 0.5 -> 0.25. With 0.5: z - ToF 0.2-0.4 cm rms, vz jitter 0.04 m/s; the offset really moves
+  // ~0.3 m/s^2 per s (~0.06 between two ToF readings), so 0.25 still leaves ~4x margin. If z leaves the ToF by
+  // more than ~1 cm or the ToF gets refused (floorSteps counts up): back to 0.5.
+  float flyingBiasStd = 0.25f;
+  // on the floor (grounded(true): READY, SPINUP) without a valid ToF (it reads 0 mm there): z = 0 and vz = 0,
+  // 20 times a second. The climb then starts from the truth, and the accelerometer's spin-up shift is learned.
+  float groundZStd   = 0.005f;   // m
+  float groundVelStd = 0.01f;    // m/s
 };
 
 // What a filter's measurement does right now (the state machine, see the top).
@@ -156,6 +167,7 @@ class Sensors {
   Fix      verticalFix() const { return vFix_; }                 // ToF
   bool     still() const { return still_; }                      // the IMU says: not moving at all
   void     flying(bool on) { flying_ = on; }                     // motors running (see flyingBiasStd)
+  void     grounded(bool on) { grounded_ = on; }                 // on the floor: z = 0, vz = 0 while the ToF has nothing
   // Roll / pitch from elsewhere (Betaflight's attitude + the offset to ours), rad: corrects the IMU in flight
   void     attitudeReference(float roll, float pitch, uint32_t tUs) { imu_.setReference(roll, pitch, tUs); }
   float    noiseScale() const { return k_; }                     // the k given to the filters now
@@ -241,7 +253,7 @@ class Sensors {
   Fix      hFix_ = Fix::TRACKING, vFix_ = Fix::TRACKING;
   uint32_t camSeenUs_ = 0, tofSeenUs_ = 0;    // last valid camera velocity (tMid) / ToF height
   uint32_t pseudoUs_  = 0;                    // last made-up measurement (LOST / still)
-  bool     still_     = false, flying_ = false;
+  bool     still_     = false, flying_ = false, grounded_ = false;
   float    stillForS_ = 0.0f;                 // how long the IMU has looked still
   float    k_         = 1.0f;
 };

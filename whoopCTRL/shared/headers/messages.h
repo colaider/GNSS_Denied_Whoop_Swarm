@@ -167,7 +167,7 @@ enum FlightCmd : uint8_t {
   CMD_ABORT = 3,                                 // clear the trajectory queue, then hold
   CMD_KILL  = 4,                                 // motors off now
   CMD_START = 5,                                 // take off and hover (StateMachine::start), after CMD_CALIBRATE
-  CMD_PING  = 6,                                 // nothing: the PC is still there (lost link -> SAFETY)
+  CMD_PING  = 6,                                 // nothing: the PC is still there (lost link -> LAND)
   CMD_CALIBRATE = 7,                             // on the ground, still 2 s: gyro bias + start frame (StateMachine::calibrate)
 };
 
@@ -288,8 +288,11 @@ struct __attribute__((packed)) HoverTelem {      // PKT_HOVER_TELEM payload, M4 
   uint16_t floorSteps;                           // height filter jumps to the ToF so far (refused 3x in a row)
   float    camYawRate, gyroYawRate;              // turn about the camera's view axis, deg/s: fitted from the points / the
                                                  // gyro over the same frame pair (should agree; 0 = no fit)
+  float    ox, oy, oz;                           // StateMachine::origin: trajectories are relative to it. It MOVES when
+                                                 // x / y control comes back after a camera loss (the PC read it once:
+                                                 // the next go-to started from the old point, log 24.11 14:44)
 };
-static_assert(sizeof(HoverTelem) == 130, "Python '<I2B28f2BH2f'");
+static_assert(sizeof(HoverTelem) == 142, "Python '<I2B28f2BH5f'");
 
 // ---------------------------------------------------------------- gain tuning
 struct __attribute__((packed)) Gains {           // PKT_GAINS payload: PosCTRL gains, x y z yaw each
