@@ -10,7 +10,7 @@ void HorizontalKF::reset(uint32_t tUs) {
   Gaussian<6> g;                                   // x = 0: at rest at the origin
   g.P[PX][PX] = g.P[PY][PY] = 1e-6f;               // the origin is defined here: (1 mm)^2
   g.P[VX][VX] = g.P[VY][VY] = 0.01f * 0.01f;       // still at startup
-  g.P[BX][BX] = g.P[BY][BY] = cfg_.biasInit * cfg_.biasInit;
+  g.P[BX][BX] = g.P[BY][BY] = cfg_.noise.biasInit * cfg_.noise.biasInit;
   DelayedKF::reset(tUs, g);
   innov_[0] = innov_[1] = innovVar_[0] = innovVar_[1] = 0.0f;
   forced_ = 0;
@@ -38,14 +38,14 @@ void HorizontalKF::model(float dt, const float u[4], float F[6][6], float b[6], 
   b[BX] = b[BY] = 0.0f;
 
   // white acceleration noise q integrated over dt (per axis: position, velocity and their link)
-  const float q = cfg_.accNoise * cfg_.accNoise * u[3] * u[3];
+  const float q = cfg_.noise.accNoise * cfg_.noise.accNoise * u[3] * u[3];
   for (int a = 0; a < 2; a++) {
     const int p = PX + a, v = VX + a;
     Q[p][p] = q * dt * dt * dt / 3.0f;
     Q[p][v] = Q[v][p] = q * dt * dt / 2.0f;
     Q[v][v] = q * dt;
   }
-  Q[BX][BX] = Q[BY][BY] = cfg_.biasWalk * cfg_.biasWalk * dt;
+  Q[BX][BX] = Q[BY][BY] = cfg_.noise.biasWalk * cfg_.noise.biasWalk * dt;
 }
 
 int HorizontalKF::updateVelocity(uint32_t tUs, float vx, float vy, float std) {
@@ -81,7 +81,7 @@ void VerticalKF::reset(uint32_t tUs, float z) {
   g.x[Z] = z;
   g.P[Z][Z]   = 0.01f * 0.01f;
   g.P[VZ][VZ] = 0.01f * 0.01f;
-  g.P[BZ][BZ] = cfg_.biasInit * cfg_.biasInit;
+  g.P[BZ][BZ] = cfg_.noise.biasInit * cfg_.noise.biasInit;
   DelayedKF::reset(tUs, g);
   innov_ = innovVar_ = 0.0f;
   steps_ = 0;
@@ -94,7 +94,7 @@ void VerticalKF::predict(uint32_t tUs, float az, float k) {
 
 //   a = acc - bz;   z += vz dt + a dt^2 / 2,   vz += a dt
 void VerticalKF::model(float dt, const float u[2], float F[3][3], float b[3], float Q[3][3]) const {
-  const float h = 0.5f * dt * dt, q = cfg_.accNoise * cfg_.accNoise * u[1] * u[1];
+  const float h = 0.5f * dt * dt, q = cfg_.noise.accNoise * cfg_.noise.accNoise * u[1] * u[1];
   const float f[3][3] = {{1, dt, -h}, {0, 1, -dt}, {0, 0, 1}};
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) { F[i][j] = f[i][j]; Q[i][j] = 0.0f; }
@@ -102,7 +102,7 @@ void VerticalKF::model(float dt, const float u[2], float F[3][3], float b[3], fl
   Q[Z][Z]   = q * dt * dt * dt / 3.0f;
   Q[Z][VZ]  = Q[VZ][Z] = q * dt * dt / 2.0f;
   Q[VZ][VZ] = q * dt;
-  Q[BZ][BZ] = cfg_.biasWalk * cfg_.biasWalk * dt;
+  Q[BZ][BZ] = cfg_.noise.biasWalk * cfg_.noise.biasWalk * dt;
 }
 
 int VerticalKF::updateHeight(uint32_t tUs, float z, float std) {
@@ -112,7 +112,7 @@ int VerticalKF::updateHeight(uint32_t tUs, float z, float std) {
   if (n == 0 && rejects() >= cfg_.forceAfter) {    // the floor moved, or vz / bias ran off (flight log 31.10
     const int idx[3] = {Z, VZ, BZ};                // 22:56: only z jumped, vz ran to -28 m/s): z from the ToF,
     const float x[3] = {z, 0.0f, estimate().x[BZ]};   // vz and the bias start over (the ToF corrects them)
-    const float Rs[3] = {R[0], cfg_.stepVelStd * cfg_.stepVelStd, cfg_.biasInit * cfg_.biasInit};
+    const float Rs[3] = {R[0], cfg_.stepVelStd * cfg_.stepVelStd, cfg_.noise.biasInit * cfg_.noise.biasInit};
     force(tUs, 3, idx, x, Rs);
     steps_++;
     return 2;

@@ -87,6 +87,19 @@ void routeFromPc() {
   }
 }
 
+// The M4 can't read the chip ID itself (niclaId.h): sent at boot, then the M4 keeps it. 5 times, 1 s apart,
+// in case the first lands while the M4 is still busy in setup(); then never again.
+void sendNiclaId() {
+  static uint32_t lastMs = 0;
+  static uint8_t sent = 0;
+  if (!m4ok || sent >= 5 || (sent && millis() - lastMs < 1000)) return;
+  lastMs = millis();
+  sent++;
+  uint32_t w[3];
+  shared::niclaUid(w);
+  m4.send(msg::PKT_NICLA_ID, w, sizeof(w));
+}
+
 void routeFromM4() {
   if (!m4ok) return;
   comm::Packet p;
@@ -133,7 +146,7 @@ void sendFrame(const vision::Frame& f) {
     return;
   }
   const vision::CameraStats& s = camera.stats();
-  const calib::CameraIntrinsics& k = camera.cropIntrinsics();
+  const drones::CameraIntrinsics& k = camera.cropIntrinsics();
   msg::FrameHeader h = {f.seq, f.tEndUs, s.lastGrabUs, s.lastProcessUs, s.grabErrors, f.width, f.height, k.fx, k.fy, k.cx, k.cy};
   pc.send(msg::PKT_FRAME, &h, sizeof(h), f.data, (uint32_t)f.width * f.height);
 }
@@ -182,13 +195,17 @@ void setup() {
     pc.begin("usb");
   }
   pc.log("M7 runner starting");
+  pc.log((String(drones::known() ? "Nicla " : "UNKNOWN Nicla (not in drones/drones.h): ") + drones::cal().name + " " +
+          shared::niclaUidHex()).c_str());
 
   m4ok = m4.begin("core");                     // starts the M4, waits up to 5 s for it
   pc.log(m4ok ? "M4 started, core link ok" : "M4 not answering (no M4 program?) - running without it");
 
   if (!camera.begin()) {
     while (true) {                             // keep telling the PC instead of failing silently
-      pc.log("camera begin() failed: mode not calibrated, crop does not fit, or no RAM");
+      pc.log(drones::known() ? "camera begin() failed: mode not calibrated, crop does not fit, or no RAM"
+                            : (String("camera begin() failed: Nicla ") + shared::niclaUidHex() +
+                               " is not in drones/drones.h (calibrate it: test/imu_calib + camera_calib)").c_str());
       delay(1000);
     }
   }
@@ -204,6 +221,7 @@ void setup() {
 void loop() {
   routeFromPc();
   routeFromM4();
+  sendNiclaId();
 
   vision::Frame f;
   if (!camera.getFrame(f)) { pc.log("grab failed"); return; }

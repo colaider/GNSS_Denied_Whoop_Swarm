@@ -1,14 +1,18 @@
 # Calibrate the Nicla Vision camera from the saved chessboard images.
-# Run calib_capture.py first, then this. Produces calibration.npz.
+# Run calib_capture.py first, then this. Produces whoopCTRL/drones/<name>_<uid>/calibration.npz
+# (the UID from calib_images/uid.txt, written by calib_capture.py); then python gen_calib_headers.py.
 # python calib_run.py            -> calibrate + show undistorted preview
 # python calib_run.py --no-show  -> calibrate only
 # pip install numpy opencv-python
 
 import glob
+import os
 import sys
 
 import numpy as np
 import cv2
+
+import niclaDir
 
 IN = "calib_images"
 CHESS = (8, 6)               # INNER corners (columns, rows) - must match capture
@@ -93,8 +97,14 @@ for w in sorted(MODES):
     out[f"K_{w}"] = Kw
     print(f"{w}x{w * 3 // 4}: fx {Kw[0,0]:.2f} fy {Kw[1,1]:.2f} cx {Kw[0,2]:.2f} cy {Kw[1,2]:.2f}")
 
-np.savez("calibration.npz", **out)
-print("\nsaved calibration.npz (camera_matrix, dist_coeff, K_160, K_320, K_640)")
+uid_file = os.path.join(IN, "uid.txt")
+if not os.path.exists(uid_file):
+    raise SystemExit(f"no {uid_file}: capture with the new camera_calib.ino + calib_capture.py (they record the UID)")
+uid = open(uid_file).read().strip()
+out["uid"] = uid
+path = os.path.join(niclaDir.folder(uid), "calibration.npz")
+np.savez(path, **out)
+print(f"\nsaved {path} (camera_matrix, dist_coeff, K_160, K_320, K_640)\nnext: python gen_calib_headers.py")
 
 if "--no-show" not in sys.argv:
     img = cv2.imread(used[0])

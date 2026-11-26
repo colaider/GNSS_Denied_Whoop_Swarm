@@ -25,7 +25,7 @@
 
 #include <stdint.h>
 
-#include "../../../calibartion/imu_calib.h"
+#include "../../../drones/drones.h"   // this drone: its calibration and settings, picked by the Nicla's ID
 
 namespace sensors {
 

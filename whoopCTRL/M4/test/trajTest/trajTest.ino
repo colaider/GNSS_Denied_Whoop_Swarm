@@ -46,7 +46,7 @@ comm::CoreLink      core;
 comm::Communication m7;
 sensors::Sensors    sens;
 drone::Betaflight   fc(fcConfig());
-ctrl::PosCTRL       pos;              // gains: PosConfig in CTRL/headers/PosCTRL.h
+ctrl::PosCTRL       pos;              // gains: drones/drones.h (per drone)
 ctrl::StateMachine  sm(sens, fc, pos, smConfig());
 ctrl::Trajectory    traj;
 sensors::PointDepth depth;              // watching only: the points' 3D positions for the PC
@@ -71,6 +71,9 @@ void onCommand(uint8_t c) {
   }
   else if (c == msg::CMD_START) {
     if (sm.start()) say("arming");
+    else if (!drones::known()) m7.log(strcmp(shared::niclaUidHex(), "000000000000000000000000") == 0
+        ? "TRAJ: START ignored: no chip ID from the M7 (it sends it at boot; old m7Runner?)"
+        : (String("TRAJ: START ignored: Nicla ") + shared::niclaUidHex() + " is not in drones/drones.h (calibrate it)").c_str());
     else say(sm.calibrated() && !sm.referenceOk() ? "START ignored: FC not answering, no roll / pitch reference yet" : "START ignored: press C first (calibrate)");
   }
   else if (c == msg::CMD_HOLD) { sm.heard(); traj.clear(); }   // no more points: the loop holds the last one
@@ -88,11 +91,9 @@ void onStart(const msg::TrajStart& s) {
 void setGains(const msg::Gains& g) {    // autoTune.py, in flight. Out of 0..15 or NaN: refused
   for (int i = 0; i < 4; i++)
     if (!(g.kp[i] >= 0.0f && g.kp[i] <= 15.0f && g.kd[i] >= 0.0f && g.kd[i] <= 15.0f && g.ki[i] >= 0.0f && g.ki[i] <= 15.0f)) return;
-  ctrl::PosConfig& c = pos.config();
+  const ctrl::PosConfig& c = pos.config();
   const bool same = c.kp.x == g.kp[0] && c.kp.y == g.kp[1] && c.kp.z == g.kp[2] && c.kd.x == g.kd[0] && c.kd.y == g.kd[1] && c.kd.z == g.kd[2];
-  c.kp = sensors::Pose{g.kp[0], g.kp[1], g.kp[2], g.kp[3]};
-  c.kd = sensors::Pose{g.kd[0], g.kd[1], g.kd[2], g.kd[3]};
-  c.ki = sensors::Pose{g.ki[0], g.ki[1], g.ki[2], g.ki[3]};
+  pos.setGains(g.kp, g.kd, g.ki);       // until the next take-off: then drones.h's again
   if (same) return;                     // the PC sends each 3 times
   say("gains kp %.2f %.2f %.2f", g.kp[0], g.kp[1], g.kp[2]);
   say("gains kd %.2f %.2f %.2f", g.kd[0], g.kd[1], g.kd[2]);
@@ -130,6 +131,16 @@ void readM7() {
       setGains(g);
     }
     else if (p.type == msg::PKT_FLIGHT_CMD && p.len == sizeof(msg::FlightCommand)) onCommand(p.data[0]);
+    else if (p.type == msg::PKT_NICLA_ID && p.len == 12) {
+      uint32_t w[3];
+      memcpy(w, p.data, sizeof(w));
+      static bool told = false;
+      if (shared::setNiclaUid(w) || !told) {       // the first time (or a different one): which board, in the log
+        told = true;
+        m7.log((String(drones::known() ? "TRAJ: Nicla " : "TRAJ: UNKNOWN Nicla, will not take off: ") +
+                drones::cal().name + " " + shared::niclaUidHex()).c_str());
+      }
+    }
   }
   if (!gotFlow) sens.update();
 }
@@ -214,7 +225,7 @@ void setup() {
     say("IMU or ToF not answering, retrying");
     delay(1000);
   }
-  say("sensors ok");
+  say("sensors ok");                    // which Nicla: when the M7 sends its ID (readM7)
 }
 
 void loop() {

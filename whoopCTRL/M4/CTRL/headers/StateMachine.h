@@ -10,10 +10,6 @@ namespace ctrl {
 
 // How to fly, never where: the target comes from setTarget() every loop.
 struct SMConfig {
-  float    hoverThrottleV = 2.51f;  // 24.11 21:26: the z integral held -0.30 m/s^2 all flight = 3 % less throttle -> 2.51
-                                    // hover throttle x battery volts (logs 11 + 17.11: 2.59 +-0.01 from 6.7 to 7.8 V):
-                                    // sets PosConfig::throttleHover every loop (0: keep the fixed one). Fixed 0.34:
-                                    // 8 % too much on a full battery, shot up at takeoff
   float    batteryTauS   = 2.0f;    // battery volts smoothed over this
   float    spinupS       = 1.5f;    // SPINUP: throttle 0 -> hover throttle in this long (after arming), level, no
                                     // feedback; then CLIMB. To 1.10x it lifted off on its own and shot up (log 23.11)
@@ -43,7 +39,8 @@ public:
     void step(uint32_t nowUs);       // every loop: the whole state machine
 
     bool calibrate();                // READY, drone still 2 s: gyro bias + start frame (position 0). false: moved
-    bool start();                    // READY + calibrated: arm, take off. Each flight needs a new calibrate()
+    bool start();                    // READY + calibrated + a known Nicla (drones::known()): arm, take off.
+                                     // Each flight needs a new calibrate()
     void land();
     void kill();
     // Where to be, start frame (calibration point on the floor = 0). Call every loop. CLIMB uses its z, FLY all of it.

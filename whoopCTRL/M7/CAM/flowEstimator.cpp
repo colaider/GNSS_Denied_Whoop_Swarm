@@ -11,7 +11,7 @@ FlowEstimator::FlowEstimator(const FlowConfig& cfg)
       ransac_(cfg.ransacIters, cfg.inlierPx, cfg.minInliers),
       rep_(gftt_, cfg.maxPoints, cfg.sectors, cfg.sectors, 3, 3.0f, cfg.refillBelow, cfg.searchesPerFrame) {}
 
-void FlowEstimator::begin(const calib::CameraIntrinsics& k) {
+void FlowEstimator::begin(const drones::CameraIntrinsics& k) {
   cx_ = k.cx;
   cy_ = k.cy;
   fx_ = k.fx;

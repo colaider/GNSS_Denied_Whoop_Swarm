@@ -3,17 +3,21 @@
 #   2) accel 6 faces  - each axis pointing up and down, 5 s each, any order
 #   3) accel full fit - ~24 random still poses, ellipsoid fit (bias, scale, cross-axis)
 #   4) gyro scale     - optional, exact 360 deg turn about each axis
-# Result: imu_calib.json + C++ constants to paste into the flight code.
+# Result: whoopCTRL/drones/<name>_<uid>/imu_calib.json (the board's UID comes from the sketch);
+# then python gen_calib_headers.py.
 # pip install pyserial numpy
 # python imu_calib.py          (auto-finds the Nicla)
 # python imu_calib.py COM5     (or give the port)
 
 import json
+import os
 import sys
 import threading
 import time
 
 import numpy as np
+
+import niclaDir
 
 GYRO_STILL_DPS = 0.5      # max gyro std while "still"
 ACC_STILL_G = 0.01        # max accel std while "still"
@@ -102,11 +106,17 @@ def turn_angle(d, axis, gyro_bias):
 
 samples = []
 lock = threading.Lock()
+uid = None                                        # "UID <hex>" lines from imu_calib.ino
 
 
 def reader(ser):
+    global uid
     while True:
-        parts = ser.readline().decode(errors="ignore").strip().split(",")
+        line = ser.readline().decode(errors="ignore").strip()
+        if line.startswith("UID "):
+            uid = line[4:].strip()
+            continue
+        parts = line.split(",")
         if len(parts) != 8:
             continue
         try:
@@ -180,7 +190,10 @@ def main():
     if len(d) < 100:
         raise SystemExit("no IMU data - is imu_calib.ino uploaded and Serial Monitor closed?")
     rate = len(d) / 2
-    print(f"connected on {port}, {rate:.0f} samples/s, {d[:, 7].mean():.1f} degC")
+    if uid is None:
+        raise SystemExit("no UID line - upload the new imu_calib.ino (it prints the board's UID)")
+    out_dir = niclaDir.folder(uid)
+    print(f"connected on {port}, {rate:.0f} samples/s, {d[:, 7].mean():.1f} degC, Nicla {uid}")
     print("tip: let the board run ~5 min first, the gyro bias moves while it warms up\n")
 
     # 1) gyro bias
@@ -270,7 +283,8 @@ def main():
         print()
 
     result = {
-        "settings": "LSM6DSOX 416 Hz, +-4 g, +-2000 dps",
+        "settings": "LSM6DSOX acc 1.66 kHz +-16 g LPF2 ODR/45, gyro 416 Hz +-2000 dps",
+        "uid": uid,
         "temp_C": round(temp, 2),
         "gyro_bias_dps": gyro_bias.round(5).tolist(),
         "gyro_noise_dps": gyro_noise.round(5).tolist(),
@@ -284,9 +298,11 @@ def main():
         result["accel_bias_fit_g"] = acc_bias_fit.round(6).tolist()
         result["apply_fit"] = "a = accel_M @ (a_raw - accel_bias_fit)"
         result["fit_check"] = fit_report
-    with open("imu_calib.json", "w") as fh:
+    out = os.path.join(out_dir, "imu_calib.json")
+    with open(out, "w") as fh:
         json.dump(result, fh, indent=2)
-    print("saved imu_calib.json\n\n// paste into the flight code:")
+    print(f"saved {out}\nnext: the camera (camera_calib.ino, calib_capture.py, calib_run.py), "
+          "then gen_calib_headers.py\n\n// the values:")
 
     def arr(name, v, fmt):
         print(f"const float {name}[3] = {{{', '.join(format(x, fmt) for x in v)}}};")

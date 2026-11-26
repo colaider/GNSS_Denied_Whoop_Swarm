@@ -2,6 +2,7 @@
 
 #include <math.h>
 
+#include "../../drones/drones.h"
 #include "../../shared/headers/sharedClock.h"
 
 namespace sensors {
@@ -41,6 +42,18 @@ bool Sensors::startup(uint32_t ms) {
   stillForS_ = 0.0f;
   k_ = 1.0f;
   return true;
+}
+
+void Sensors::flying(bool on) {
+  // Take-off: this drone's IMU noise (drones.h). On the floor the x / y bias was learned as ~0, but the motors'
+  // vibration shifts it by a steady, per-drone amount (flightBias): start from it instead of learning it while drifting.
+  const drones::Drone& d = drones::active();
+  if (on && !flying_) {
+    hkf_.config().noise = d.kfXY;
+    vkf_.config().noise = d.kfZ;
+    if (d.flightBias[0] != 0.0f || d.flightBias[1] != 0.0f) hkf_.setBias(d.flightBias[0], d.flightBias[1], d.kfXY.biasInit);
+  }
+  flying_ = on;
 }
 
 uint8_t Sensors::update(const msg::FlowHeader* flow, const msg::PointMsg* pts, int n) {

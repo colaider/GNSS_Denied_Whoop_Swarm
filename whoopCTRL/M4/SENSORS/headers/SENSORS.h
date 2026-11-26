@@ -166,7 +166,7 @@ class Sensors {
   Fix      horizontalFix() const { return hFix_; }               // camera: TRACKING / COASTING / LOST
   Fix      verticalFix() const { return vFix_; }                 // ToF
   bool     still() const { return still_; }                      // the IMU says: not moving at all
-  void     flying(bool on) { flying_ = on; }                     // motors running (see flyingBiasStd)
+  void     flying(bool on);                                      // motors running: flyingBiasStd; at take-off drones.h's IMU noise + flightBias
   void     grounded(bool on) { grounded_ = on; }                 // on the floor: z = 0, vz = 0 while the ToF has nothing
   // Roll / pitch from elsewhere (Betaflight's attitude + the offset to ours), rad: corrects the IMU in flight
   void     attitudeReference(float roll, float pitch, uint32_t tUs) { imu_.setReference(roll, pitch, tUs); }

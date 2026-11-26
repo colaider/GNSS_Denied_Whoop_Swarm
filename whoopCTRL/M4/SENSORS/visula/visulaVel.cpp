@@ -21,7 +21,7 @@ visualVel::vw visualVel::linReg(const float * x, const float * y, int n){
     return out;
 }
 void visualVel::undistort(float u, float v, const msg::FlowHeader& flow, float& x, float& y) {
-    const float* k = calib::CAM_DIST;                  // OpenCV order: k1, k2, p1, p2, k3
+    const float* k = drones::cal().camDist;                 // OpenCV order: k1, k2, p1, p2, k3
     const float xd = (u - flow.cx) / flow.fx, yd = (v - flow.cy) / flow.fy;
     x = xd; y = yd;
     for (int i = 0; i < 5; i++) {                      // the model maps undistorted -> distorted: inverted by iterating

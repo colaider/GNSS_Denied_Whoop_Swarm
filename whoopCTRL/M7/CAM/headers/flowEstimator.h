@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "../../../calibartion/camera_calib.h"
+#include "../../../drones/drones.h"
 #include "../closedCV/headers/GFTT.h"
 #include "../closedCV/headers/RANSAC.h"
 #include "../closedCV/headers/pyramidLK.h"
@@ -69,7 +69,7 @@ class FlowEstimator {
   explicit FlowEstimator(const FlowConfig& cfg = FlowConfig());
 
   // Camera intrinsics of the images you will give (CameraReader::cropIntrinsics()).
-  void begin(const calib::CameraIntrinsics& k);
+  void begin(const drones::CameraIntrinsics& k);
 
   // Processes the newest frame. Returns getResult().valid.
   bool update(const ccv::Image& img, uint32_t seq, uint32_t tUs);

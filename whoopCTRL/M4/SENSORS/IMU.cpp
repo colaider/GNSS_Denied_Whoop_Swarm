@@ -8,8 +8,8 @@
 
 namespace sensors {
 
-// LSM6DSOX. imu_calib.h was measured at 416 Hz, +-4 g, +-2000 dps (its values are in g / dps, so they still
-// apply; recheck with test/imu_calib if the level or |g| looks off).
+// LSM6DSOX. The calibration (drones::cal(), this Nicla's) is in g / dps, so it holds for any range;
+// test/imu_calib now measures at these same settings.
 // Accelerometer 24.11: in flight it read -3.5 m/s^2 on average in hover (impossible: 0) and swung +-2 m/s^2 for
 // seconds while the ToF saw the drone nearly still. +-4 g clipped the motor vibration (one-sided clipping = an
 // offset that moves with the throttle) and 416 Hz without a filter folded it down into slow fake motion. Now:
@@ -32,14 +32,15 @@ static SPISettings imuSpi(10000000, MSBFIRST, SPI_MODE0);
 
 // ---------------------------------------------------------------- setup
 
-IMU::IMU(const ImuConfig& cfg) : cfg_(cfg) {
-  // start from the calibrated gyro bias (startup() measures a fresh one)
-  bias_ = {calib::GYRO_BIAS_DPS[0] * calib::GYRO_SCALE[0] * DEG2RAD,
-           calib::GYRO_BIAS_DPS[1] * calib::GYRO_SCALE[1] * DEG2RAD,
-           calib::GYRO_BIAS_DPS[2] * calib::GYRO_SCALE[2] * DEG2RAD};
-}
+IMU::IMU(const ImuConfig& cfg) : cfg_(cfg) {}
 
 bool IMU::begin() {
+  // start from the calibrated gyro bias (startup() measures a fresh one)
+  const drones::Calibration& c = drones::cal();
+  bias_ = {c.gyroBiasDps[0] * c.gyroScale[0] * DEG2RAD,
+           c.gyroBiasDps[1] * c.gyroScale[1] * DEG2RAD,
+           c.gyroBiasDps[2] * c.gyroScale[2] * DEG2RAD};
+
   pinMode(CS, OUTPUT);
   digitalWrite(CS, HIGH);
   SPI1.begin();
@@ -222,20 +223,18 @@ bool IMU::readSample(ImuSample& s) {
   s.tUs = shared::nowUs();
 
   // gyro: scale only, the bias is removed in step() (startup() measures it)
+  const drones::Calibration& c = drones::cal();
   const float gs = GYRO_LSB * DEG2RAD;
-  s.gyro = {d[0] * gs * calib::GYRO_SCALE[0], d[1] * gs * calib::GYRO_SCALE[1],
-            d[2] * gs * calib::GYRO_SCALE[2]};
+  s.gyro = {d[0] * gs * c.gyroScale[0], d[1] * gs * c.gyroScale[1], d[2] * gs * c.gyroScale[2]};
 
   // accelerometer: the full calibration fit if there is one, else bias + scale
   const float ar[3] = {d[3] * ACC_LSB, d[4] * ACC_LSB, d[5] * ACC_LSB};
   float a[3];
-  if (calib::ACC_HAS_FIT) {
-    const float b[3] = {ar[0] - calib::ACC_BIAS_FIT_G[0], ar[1] - calib::ACC_BIAS_FIT_G[1],
-                        ar[2] - calib::ACC_BIAS_FIT_G[2]};
-    for (int i = 0; i < 3; i++)
-      a[i] = calib::ACC_M[i][0] * b[0] + calib::ACC_M[i][1] * b[1] + calib::ACC_M[i][2] * b[2];
+  if (c.accHasFit) {
+    const float b[3] = {ar[0] - c.accBiasFitG[0], ar[1] - c.accBiasFitG[1], ar[2] - c.accBiasFitG[2]};
+    for (int i = 0; i < 3; i++) a[i] = c.accM[i][0] * b[0] + c.accM[i][1] * b[1] + c.accM[i][2] * b[2];
   } else {
-    for (int i = 0; i < 3; i++) a[i] = (ar[i] - calib::ACC_BIAS_G[i]) / calib::ACC_SCALE[i];
+    for (int i = 0; i < 3; i++) a[i] = (ar[i] - c.accBiasG[i]) / c.accScale[i];
   }
   s.acc = {a[0], a[1], a[2]};
   // body axes = IMU axes for now; if the board sits rotated on the drone, map the axes here

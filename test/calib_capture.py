@@ -1,16 +1,18 @@
 # Capture N full-resolution chessboard images from camera_calib.ino.
 # Live view = small preview. SPACE asks the board for ONE full 640x480 raw
 # Bayer frame, converts it to grey and saves it (only if the board is found).
-# SPACE = capture, q = quit.
+# SPACE = capture, q = quit. The board's UID (its first line) goes to calib_images/uid.txt for calib_run.py;
+# another board than last time: its old images are deleted first.
 # pip install numpy opencv-python
 
 import os
 import socket
+import sys
 
 import numpy as np
 import cv2
 
-NICLA_IP = "172.20.10.2"
+NICLA_IP = sys.argv[1] if len(sys.argv) > 1 else "172.20.10.2"   # python calib_capture.py <ip from Serial Monitor>
 PORT = 8080
 N = 20                       # how many full images to collect
 OUT = "calib_images"
@@ -28,6 +30,22 @@ print("connected, waiting for frames...")
 warned = False
 
 
+def new_board(uid):
+    """This board's UID: kept in calib_images/uid.txt; another board's images are removed."""
+    p = os.path.join(OUT, "uid.txt")
+    old = open(p).read().strip() if os.path.exists(p) else None
+    if old != uid:
+        gone = [os.path.join(OUT, n) for n in os.listdir(OUT) if n.endswith(".png")]
+        gone += [os.path.join(OUT, "raw", n) for n in os.listdir(os.path.join(OUT, "raw")) if n.endswith(".png")]
+        for g in gone:
+            os.remove(g)
+        if gone:
+            print(f"new board {uid}: removed {len(gone)} images of {old}")
+        with open(p, "w") as fh:
+            fh.write(uid + "\n")
+    print("Nicla", uid)
+
+
 def read_frame():
     """Return (kind, image) for one frame. kind 'P' = preview, 'F' = full raw."""
     global warned
@@ -41,6 +59,9 @@ def read_frame():
         if not line:
             raise SystemExit("board closed the connection")
         h = line.decode(errors="ignore").split()
+        if len(h) == 2 and h[0] == "UID":
+            new_board(h[1])
+            continue
         # FRAME <kind> <w> <h> <len>
         if len(h) < 5 or h[0] != "FRAME":
             if not warned and h and h[0] == "IMU":

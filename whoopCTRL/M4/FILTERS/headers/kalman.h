@@ -202,6 +202,13 @@ class DelayedKF {
     for (int j = 0; j < hist_.count(); j++) loosen(hist_.at(j).g, s, var);
   }
 
+  // State s IS value +- sqrt(var) (correlations forgotten), now and in the remembered steps.
+  // Unlike force() it does not touch the measurement order (later camera stamps are still taken).
+  void assign(int s, float value, float var) {
+    assign(g_, s, value, var);
+    for (int j = 0; j < hist_.count(); j++) assign(hist_.at(j).g, s, value, var);
+  }
+
   const Gaussian<N>& estimate() const { return g_; }
   uint32_t timeUs() const { return tUs_; }
   int      rejects() const { return rejects_; }     // measurements refused in a row
@@ -238,6 +245,12 @@ class DelayedKF {
 
   static void loosen(Gaussian<N>& g, int s, float var) {
     if (g.P[s][s] >= var) return;
+    for (int a = 0; a < N; a++) g.P[s][a] = g.P[a][s] = 0.0f;
+    g.P[s][s] = var;
+  }
+
+  static void assign(Gaussian<N>& g, int s, float value, float var) {
+    g.x[s] = value;
     for (int a = 0; a < N; a++) g.P[s][a] = g.P[a][s] = 0.0f;
     g.P[s][s] = var;
   }

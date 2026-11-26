@@ -99,7 +99,7 @@ bool CameraReader::applyExposure() {
       limitRows_ = 0;
       return true;                             // the library's settings as they are
     case ExposureMode::AUTO_CAPPED:
-      limitRows_ = exposure::usToRows(cfg_.maxExposureUs, rowUs_);
+      limitRows_ = exposure::usToRows(drones::active().maxExposureUs ? drones::active().maxExposureUs : cfg_.maxExposureUs, rowUs_);
       n = exposure::capRegs(limitRows_, cfg_.maxPostGain, 0, r);
       break;
     case ExposureMode::MANUAL:
@@ -169,7 +169,7 @@ bool CameraReader::computeCropGeometry() {
   if (!modeSize(cfg_.windowMode, windowW_, windowH_)) return false;
   if (windowW_ > sensorW || windowH_ > sensorH) return false;
 
-  const calib::CameraIntrinsics* k = intrinsicsForMode(cfg_.sensorMode);
+  const drones::CameraIntrinsics* k = intrinsicsForMode(cfg_.sensorMode);
   if (!k) return false;                        // this mode was never calibrated
   modeK_ = *k;
 
@@ -215,11 +215,11 @@ void CameraReader::extractCrop(uint8_t* dst) {
 
 // ---------------------------------------------------------------- helpers
 
-const calib::CameraIntrinsics* CameraReader::intrinsicsForMode(int32_t mode) {
+const drones::CameraIntrinsics* CameraReader::intrinsicsForMode(int32_t mode) {
   switch (mode) {
-    case CAMERA_R160x120: return &calib::CAM_160x120;
-    case CAMERA_R320x240: return &calib::CAM_320x240;
-    case CAMERA_R640x480: return &calib::CAM_640x480;
+    case CAMERA_R160x120: return drones::camera(160);   // nullptr: this board is not in drones/drones.h
+    case CAMERA_R320x240: return drones::camera(320);
+    case CAMERA_R640x480: return drones::camera(640);
     default:              return nullptr;
   }
 }

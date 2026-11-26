@@ -2,6 +2,7 @@
 
 #include <math.h>
 
+#include "../../drones/drones.h"   // this drone: its calibration and settings, picked by the Nicla's ID
 #include "../../shared/headers/sharedClock.h"
 
 namespace ctrl {
@@ -46,6 +47,9 @@ void StateMachine::takeReference() {               // still on the ground: Betaf
 bool StateMachine::start() {
   heard();
   if (state_ != READY || !calibrated_ || !refOk_) return false;   // no flight without the roll / pitch reference
+  if (!drones::known()) return false;               // this Nicla is not in drones/drones.h: raw IMU, no camera
+  const drones::Drone& d = drones::active();
+  pos_.setGains(d.kp, d.kd, d.ki);                 // this drone's (drones.h); the PC may change them in flight
   calibrated_ = false; go(SPINUP);
   return true;
 }
@@ -105,9 +109,10 @@ void StateMachine::step(uint32_t nowUs) {
   dt_ = now_ ? (int32_t)(nowUs - now_) * 1e-6f : 0.0f;
   now_ = nowUs; fc_.update(nowUs);
   const float v = fc_.batteryV();
-  if (cfg_.hoverThrottleV > 0.0f && v > 5.0f) {    // hover throttle from the battery (0 V: not read yet)
+  const float hoverV = drones::active().hoverThrottleV;   // throttle x volts (drones.h); a fixed 0.34 was 8 % too
+  if (hoverV > 0.0f && v > 5.0f) {                 // much on a full battery. Hover throttle from the battery (0 V: not read yet)
     vBat_ = vBat_ > 0.0f ? vBat_ + (v - vBat_) * fminf(dt_ / cfg_.batteryTauS, 1.0f) : v;
-    pos_.config().throttleHover = cfg_.hoverThrottleV / vBat_;
+    pos_.config().throttleHover = hoverV / vBat_;
   }
   const float hover = pos_.config().throttleHover;
 

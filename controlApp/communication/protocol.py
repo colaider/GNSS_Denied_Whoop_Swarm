@@ -11,6 +11,7 @@ from utilities.cHeaders import Header
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 MSG = Header(os.path.join(ROOT, "whoopCTRL", "shared", "headers", "messages.h"))
 SM = Header(os.path.join(ROOT, "whoopCTRL", "M4", "CTRL", "headers", "StateMachine.h"))
+DRONES = Header(os.path.join(ROOT, "whoopCTRL", "drones", "drones.h"))
 
 STATES = {v: k for k, v in SM.enums["State"].items()}             # ctrl::StateMachine::State: value -> name (5 unused)
 PACKET_NAMES = {v: k for k, v in MSG.enums["PacketType"].items()}

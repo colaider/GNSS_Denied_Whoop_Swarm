@@ -15,7 +15,8 @@
 //    Calibrate the mode you will fly, or convert intrinsics with these ratios.
 //  * Capture is snapshot mode: the frame grabbed after 'F' is a fresh exposure.
 //
-// Protocol (TCP): "FRAME <kind> <w> <h> <len>\n" + <len> bytes, 1 byte/px
+// Protocol (TCP): first "UID <24 hex>\n" (this Nicla's chip ID: calib_run.py saves into its folder),
+// then "FRAME <kind> <w> <h> <len>\n" + <len> bytes, 1 byte/px
 //   kind P = preview 160x120 (one Bayer phase -> clean grey)
 //   kind F = full 640x480 raw Bayer
 
@@ -106,6 +107,13 @@ void loop() {
   WiFiClient client = server.available();
   if (!client) return;
   Serial.println("client connected");
+  {
+    const volatile uint32_t* p = (const volatile uint32_t*)0x1FF1E800UL;   // STM32H747 unique ID
+    char s[32];
+    snprintf(s, sizeof(s), "UID %08lx%08lx%08lx\n", (unsigned long)p[0], (unsigned long)p[1], (unsigned long)p[2]);
+    client.print(s);
+    Serial.print(s);
+  }
 
   while (client.connected()) {
     bool full = false;

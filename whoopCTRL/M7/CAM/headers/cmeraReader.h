@@ -7,7 +7,7 @@
 #include "gc2145.h"
 #include "frameCapture.h"
 #include "exposure.h"
-#include "../../../calibartion/camera_calib.h"   // whoopCTRL/calibartion, made by gen_calib_headers.py
+#include "../../../drones/drones.h"   // this drone: its calibration and settings, picked by the Nicla's ID
 
 namespace vision {
 
@@ -101,7 +101,7 @@ class CameraReader {
   uint32_t exposureDelayUs() const { return delayUs_; }      // what Frame.tUs subtracts now
   uint16_t exposureLimitRows() const { return limitRows_; }  // cap (AUTO_CAPPED) / fixed (MANUAL), 0: none
 
-  const calib::CameraIntrinsics& cropIntrinsics() const { return cropK_; }  // for the output image
+  const drones::CameraIntrinsics& cropIntrinsics() const { return cropK_; }  // for the output image
   const CameraStats&  stats()  const { return stats_; }
   const CameraConfig& config() const { return cfg_; }
 
@@ -125,7 +125,7 @@ class CameraReader {
   bool    computeCropGeometry();                   // crop origin in the window + crop intrinsics
   void    extractCrop(uint8_t* dst);               // raw_ -> dst: 2x2 binning (R+G+G+B)/4 -> grey
 
-  static const calib::CameraIntrinsics* intrinsicsForMode(int32_t mode);  // nullptr if not calibrated
+  static const drones::CameraIntrinsics* intrinsicsForMode(int32_t mode);  // nullptr if not calibrated
   static bool modeSize(int32_t mode, uint16_t& w, uint16_t& h);
   static int  subsampleForMode(int32_t mode);      // sensor rows per output row (the library's setting)
 
@@ -141,8 +141,8 @@ class CameraReader {
   uint16_t  windowW_ = 0, windowH_ = 0;            // size of the transferred window
   int16_t   cropX0_  = 0, cropY0_  = 0;            // raw crop origin in the window, kept even (each 2x2 = one Bayer cell)
 
-  calib::CameraIntrinsics modeK_{};                // intrinsics of the full sensorMode image
-  calib::CameraIntrinsics cropK_{};                // intrinsics of the output crop
+  drones::CameraIntrinsics modeK_{};                // intrinsics of the full sensorMode image
+  drones::CameraIntrinsics cropK_{};                // intrinsics of the output crop
 
   uint8_t   out_[2][MAX_CROP_W * MAX_CROP_H];      // two grey output buffers, used in turn
   uint8_t   outIdx_ = 0;                           // buffer the next frame goes into

@@ -23,29 +23,21 @@
 #include <stdint.h>
 
 #include "kalman.h"
+#include "../../../drones/drones.h"   // the IMU noise: per drone
 
 namespace filters {
 
 struct HorizontalConfig {
-  // How wrong the IMU acceleration is while calm, m/s^2/sqrt(Hz); predict()'s k scales it
-  // up while rotating / shaking. The sensor itself is ~0.006 (8 mg at 416 Hz, bench); what
-  // counts is the attitude error (1 deg tilt = 0.17 m/s^2) and, in flight, vibration.
-  // Larger: follows the camera (and its noise) more; smaller: smoother but lags.
-  // 0.3 gave camera NIS 0.04 on the bench (sanity 21:18): far too large, the fused velocity
-  // was as noisy as the camera's. 0.08 ~ NIS 1.
-  float accNoise  = 0.08f;
-  float biasWalk  = 0.002f;      // how fast the bias may change, m/s^2/sqrt(s)
-  float biasInit  = 0.2f;        // bias uncertainty at reset, m/s^2 (~20 mg)
+  // accNoise (x predict()'s k while rotating / shaking), biasWalk, biasInit: drones/drones.h. The sensor itself is
+  // ~0.006 (8 mg at 416 Hz, bench); what counts is the attitude error (1 deg tilt = 0.17 m/s^2) and vibration.
+  // Larger accNoise: follows the camera (and its noise) more; smaller: smoother but lags.
+  drones::KfNoise noise = drones::DEFAULT.kfXY;
   float gate      = 5.0f;        // camera velocity more than this many std off: refused
   int   forceAfter = 5;          // ...this many refused in a row: taken as the new velocity
 };
 
 struct VerticalConfig {
-  float accNoise  = 0.05f;       // as above, z; a tilt error barely changes z (cos). 0.1: ToF NIS 0.12
-  // In flight vibration shifts the accelerometer by 1-4 m/s^2 (flight logs 31.10): the bias must
-  // follow within seconds. 0.002 learned 0.7 of 4 m/s^2 in 12 s; 0.1 learns it (simulated).
-  float biasWalk  = 0.1f;
-  float biasInit  = 0.2f;
+  drones::KfNoise noise = drones::DEFAULT.kfZ;   // as above, z: a tilt error barely changes z (cos)
   float gate      = 5.0f;        // ToF height more than this many std off: refused
   int   forceAfter = 3;          // ...this many in a row: a step in the floor, height jumps to it
   float stepVelStd = 0.5f;       // ...and vz restarts at 0 with this std, m/s
@@ -71,6 +63,10 @@ class HorizontalKF : public DelayedKF<6, 4, 96> {   // u = [ax, ay, yaw, k]; 96 
   // A weak "probably not moving" measurement, v = 0 +- std (no camera for long / IMU still).
   void zeroVelocity(uint32_t tUs, float std);
 
+  // The accelerometer bias IS (bx, by) +- std, body x / y, m/s^2 (take-off: the motors' vibration shifts it)
+  void setBias(float bx, float by, float std) { assign(BX, bx, std * std); assign(BY, by, std * std); }
+
+  HorizontalConfig& config() { return cfg_; }
   float innovation(int axis) const { return innov_[axis]; }  // measured - predicted, last update
   float innovationStd(int axis) const;                        // what it should be, 1 std
   uint32_t forced() const { return forced_; }                 // times the camera was forced in
@@ -100,6 +96,7 @@ class VerticalKF : public DelayedKF<3, 2, 48> {     // u = [az, k]; 48 steps = 1
   void loosenBias(float std) { loosen(BZ, std * std); }       // the bias may be anything +- std now (motors spinning up)
   bool setHeight(uint32_t tUs, float z, float std);           // the height IS z (ToF back after LOST)
 
+  VerticalConfig& config() { return cfg_; }
   float innovation() const { return innov_; }
   float innovationStd() const;
   uint32_t steps() const { return steps_; }                   // floor steps so far

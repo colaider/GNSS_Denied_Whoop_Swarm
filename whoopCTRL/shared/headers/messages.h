@@ -44,6 +44,7 @@ enum PacketType : uint8_t {
 
   PKT_GAINS        = 22,   // Gains: controller gains in flight (PC -> M4, autoTune.py)
   PKT_POINT_DEPTH  = 23,   // PointDepthHeader + count * PointDepthMsg: tracked points in 3D (M4 -> PC, watching)
+  PKT_NICLA_ID     = 24,   // 3 x uint32: the chip ID, M7 -> M4 at boot only (the M4 cannot read it, niclaId.h)
 };
 
 // Packet types the M7 passes from the PC to the M4 unchanged.

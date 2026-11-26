@@ -10,12 +10,12 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QScrollArea
 
-from communication.protocol import MSG, SM
+from communication.protocol import MSG, DRONES
 
 WINDOW_S = 30.0
 ROW_PX = 130
 FIELDS = MSG.structs["HoverTelem"].fields
-HOVER_V = SM.defaults["hoverThrottleV"]     # hover throttle = this / battery volts (StateMachine)
+HOVER_V = DRONES.defaults["hoverThrottleV"]   # hover throttle = this / battery volts (the default drone, drones.h)
 BLUE, RED, GREEN, PURPLE, GREY, ORANGE = "#1d4ed8", "#dc2626", "#059669", "#7c3aed", "#94a3b8", "#d97706"
 
 ROWS = [
